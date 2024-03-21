@@ -1,5 +1,5 @@
 import os
-from typing import Union
+from typing import Union, Iterable
 
 import numpy as np
 from openmm import Vec3, app, unit
@@ -11,7 +11,7 @@ def strip_units(coords):
     return np.array(coords.value_in_unit_system(unit.md_unit_system))
 
 
-def build_protein_system(host_pdbfile: Union[app.PDBFile, str], protein_ff: str, water_ff: str):
+def build_protein_system(host_pdbfile: Union[app.PDBFile, str], protein_ff: Union[str, Iterable[str]], water_ff: str):
     """
     Build a solvated protein system with a 10A padding.
 
@@ -21,8 +21,9 @@ def build_protein_system(host_pdbfile: Union[app.PDBFile, str], protein_ff: str,
         PDB of the host structure
 
     """
-
-    host_ff = app.ForceField(f"{protein_ff}.xml", f"{water_ff}.xml")
+    protein_ff = [protein_ff] if isinstance(protein_ff, str)
+    protein_ff_xmls = [f"{_protein_ff}.xml" for _protein_ff in protein_ff]
+    host_ff = app.ForceField(*protein_ff_xmls, f"{water_ff}.xml")
     if isinstance(host_pdbfile, str):
         assert os.path.exists(host_pdbfile)
         host_pdb = app.PDBFile(host_pdbfile)
