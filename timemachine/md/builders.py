@@ -21,7 +21,7 @@ def build_protein_system(host_pdbfile: Union[app.PDBFile, str], protein_ff: Unio
         PDB of the host structure
 
     """
-    protein_ff = [protein_ff] if isinstance(protein_ff, str)
+    protein_ff = [protein_ff] if isinstance(protein_ff, str) else protein_ff
     protein_ff_xmls = [f"{_protein_ff}.xml" for _protein_ff in protein_ff]
     host_ff = app.ForceField(*protein_ff_xmls, f"{water_ff}.xml")
     if isinstance(host_pdbfile, str):
