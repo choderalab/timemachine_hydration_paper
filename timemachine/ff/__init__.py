@@ -80,7 +80,7 @@ class Forcefield:
     lj_handle_intra: Optional[nonbonded.LennardJonesIntraHandler]
     lj_handle_solv: Optional[nonbonded.LennardJonesSolventHandler]
 
-    protein_ff: str
+    protein_ff: Union[str, Iterable[str]]
     water_ff: str
 
     @classmethod
@@ -153,7 +153,7 @@ class Forcefield:
     def from_handlers(
         cls,
         ff_handlers: Iterable[Any],
-        protein_ff: str = DEFAULT_PROTEIN_FF,
+        protein_ff: Union[str, Iterable[str]] = DEFAULT_PROTEIN_FF,
         water_ff: str = DEFAULT_WATER_FF,
     ):
         hb_handle = None
