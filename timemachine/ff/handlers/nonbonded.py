@@ -2,11 +2,14 @@ import ast
 import base64
 import pickle
 from collections import Counter
+import typing
 
 import jax.numpy as jnp
 import networkx as nx
 import numpy as np
 from rdkit import Chem
+import openmm as mm
+from timemachine.ff.handlers import openmm_deserializer
 
 from timemachine import constants
 from timemachine.ff.handlers.bcc_aromaticity import AromaticityModel
@@ -366,6 +369,54 @@ class PrecomputedChargeHandler:
         return self.parameterize(mol)
 
 
+class MMSystemHandler:
+    def __init__(self, **unused_kwargs):
+        self.params = None
+        
+    def _parameterize(self, 
+                      mm_system: mm.System, 
+                      retrieval: str, # either 'charge' or 'lj'
+                      **unused_kwargs):
+        if retrieval not in ['charge', 'lj']:
+            raise NotImplementedError(f"retrieval `{retrieval}` is not recognized; must be `charge` or `lj`")
+            
+        N = mm_system.getNumParticles()
+        nbfs = [f for f in mm_system.getForces() if isinstance(f, mm.NonbondedForce)]
+        if len(nbfs) > 1:
+            raise NotImplementedError(f"there are {len(nbfs)} `NonbondedForces` in the `mm.System`")
+        elif len(nbfs) == 0:
+            params = np.zeros(N, dtype = np.float64) if retrieval == 'charge' else np.zeros((N,2), dtype = np.float64)
+        else:
+            nbf = nbfs[0]
+            params = []
+            for idx in range(N):
+                c, s, e = nbf.getParticleParameters(idx)
+                c = openmm_deserializer.value(c) * np.sqrt(constants.ONE_4PI_EPS0)
+                s = openmm_deserializer.value(s)
+                e = openmm_deserializer.value(e)
+                params.append([c, s, e])
+            params = np.array(params, dtype=np.float64)
+            if retrieval == 'lj':
+                params[:,1] = params[:,1] / 2
+                params[:,2] = np.sqrt(params[:,2])
+                params = params[:,1:]
+            else:
+                params = params[:,0]
+        return params
+
+class MMChargeHandler(MMSystemHandler):
+    def parameterize(self, mm_system, **unused_kwargs):
+        return self._parameterize(mm_system, 'charge')
+    def partial_parameterize(self, _, mm_system, **unused_kwargs):
+        return self.parameterize(mm_system)
+
+class MMLJHandler(MMSystemHandler):
+    def parameterize(self, mm_system, **unused_kwargs):
+        return self._parameterize(mm_system, 'lj')
+    def partial_parameterize(self, _, mm_system, **unused_kwargs):
+        return self.parameterize(mm_system)
+        
+    
 class SimpleChargeHandler(NonbondedHandler):
     pass
 
@@ -407,6 +458,16 @@ class LennardJonesHandler(NonbondedHandler):
         # the raw parameters already in sqrt form.
         # sigmas need to be divided by two
         return jnp.stack([sigmas / 2, epsilons], axis=1)
+
+class MMSystemLennardJonesHandler:
+    def __init__(self, **unused_kwargs):
+        self.params = None
+
+    def parameterize(self, mm_system: mm.System, **unused_kwargs):
+        
+    
+    
+    
 
 
 class LennardJonesIntraHandler(LennardJonesHandler):
