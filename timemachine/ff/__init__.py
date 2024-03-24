@@ -7,7 +7,7 @@ from warnings import warn
 from timemachine.constants import DEFAULT_FF, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF
 from timemachine.ff.handlers import bonded, nonbonded
 from timemachine.ff.handlers.deserialize import deserialize_handlers
-from timemachine.ff.handlers.nonbonded import PrecomputedChargeHandler
+from timemachine.ff.handlers.nonbonded import PrecomputedChargeHandler, MMSystemChargeHandler, MMSystemLJHandler
 from timemachine.ff.handlers.serialize import serialize_handlers
 
 _T = TypeVar("_T")
@@ -48,10 +48,30 @@ class Forcefield:
     Utility class for wrapping around a list of ff_handlers
     """
 
-    hb_handle: Optional[bonded.HarmonicBondHandler]
-    ha_handle: Optional[bonded.HarmonicAngleHandler]
-    pt_handle: Optional[bonded.ProperTorsionHandler]
-    it_handle: Optional[bonded.ImproperTorsionHandler]
+    hb_handle: Optional[
+        Union[
+            bonded.HarmonicBondHandler,
+            bonded.MMSystemHarmonicBondHandler,
+            ]
+    ]
+    ha_handle: Optional[
+        Union[
+            bonded.HarmonicAngleHandler,
+            bonded.MMSystemHarmonicAngleHandler,
+            ]
+    ]
+    pt_handle: Optional[
+        Union[
+            bonded.ProperTorsionHandler,
+            bonded.MMSystemProperTorsionHandler,
+            ]
+    ]
+    it_handle: Optional[
+        Union[
+            bonded.ImproperTorsionHandler,
+            bonded.MMSystemImproperTorsionHandler,
+            ]
+    ]
     q_handle: Optional[
         Union[
             nonbonded.SimpleChargeHandler,
@@ -144,6 +164,33 @@ class Forcefield:
     def load_default(cls) -> "Forcefield":
         """alias for load_from_file(DEFAULT_FF)"""
         return cls.load_from_file(DEFAULT_FF)
+
+    @classmethod
+    def load_mm_system(cls, mm_system) -> "Forcefield":
+        """load a forcefield object from an `mm.System` object"""
+        ff = cls.load_default()
+        q_handle = MMSystemChargeHandler()
+        q_handle_intra = MMSystemChargeHandler()
+        q_handle_solv = MMSystemChargeHandler()
+
+        lj_handle = MMSystemLJHandler()
+        lj_handle_intra = MMSystemLJHandler()
+        lj_handle_solv = MMSystemLJHandler()
+        return Forcefield(
+            hb_handle=bonded.MMSystemHarmonicBondHandler(),
+            ha_handle=bonded.MMSystemHarmonicAngleHandler(),
+            pt_handle=bonded.MMSystemProperTorsionHandler(),
+            it_handle=bonded.MMSystemImproperTorsionHandler(),
+            q_handle=q_handle,
+            q_handle_solv=q_handle_solv,
+            q_handle_intra=q_handle_intra,
+            lj_handle=lj_handle,
+            lj_handle_solv=lj_handle_solv,
+            lj_handle_intra=lj_handle_intra,
+            protein_ff=ff.protein_ff,
+            water_ff=ff.water_ff,
+        )
+ 
 
     @classmethod
     def load_precomputed_default(cls) -> "Forcefield":
