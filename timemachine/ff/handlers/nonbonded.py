@@ -404,13 +404,13 @@ class MMSystemHandler:
                 params = params[:,0]
         return params
 
-class MMChargeHandler(MMSystemHandler):
+class MMSystemChargeHandler(MMSystemHandler):
     def parameterize(self, mm_system, **unused_kwargs):
         return self._parameterize(mm_system, 'charge')
     def partial_parameterize(self, _, mm_system, **unused_kwargs):
         return self.parameterize(mm_system)
 
-class MMLJHandler(MMSystemHandler):
+class MMSystemLJHandler(MMSystemHandler):
     def parameterize(self, mm_system, **unused_kwargs):
         return self._parameterize(mm_system, 'lj')
     def partial_parameterize(self, _, mm_system, **unused_kwargs):
@@ -458,16 +458,6 @@ class LennardJonesHandler(NonbondedHandler):
         # the raw parameters already in sqrt form.
         # sigmas need to be divided by two
         return jnp.stack([sigmas / 2, epsilons], axis=1)
-
-class MMSystemLennardJonesHandler:
-    def __init__(self, **unused_kwargs):
-        self.params = None
-
-    def parameterize(self, mm_system: mm.System, **unused_kwargs):
-        
-    
-    
-    
 
 
 class LennardJonesIntraHandler(LennardJonesHandler):
