@@ -58,6 +58,7 @@ class Forcefield:
             nonbonded.AM1BCCHandler,
             nonbonded.AM1CCCHandler,
             nonbonded.PrecomputedChargeHandler,
+            nonbonded.MMSystemChargeHandler,
         ]
     ]
     q_handle_intra: Optional[
@@ -66,6 +67,7 @@ class Forcefield:
             nonbonded.AM1BCCIntraHandler,
             nonbonded.AM1CCCIntraHandler,
             nonbonded.PrecomputedChargeHandler,
+            nonbonded.MMSystemChargeHandler,
         ]
     ]
     q_handle_solv: Optional[
@@ -74,11 +76,27 @@ class Forcefield:
             nonbonded.AM1BCCSolventHandler,
             nonbonded.AM1CCCSolventHandler,
             nonbonded.PrecomputedChargeHandler,
+            nonbonded.MMSystemChargeHandler,
         ]
     ]
-    lj_handle: Optional[nonbonded.LennardJonesHandler]
-    lj_handle_intra: Optional[nonbonded.LennardJonesIntraHandler]
-    lj_handle_solv: Optional[nonbonded.LennardJonesSolventHandler]
+    lj_handle: Optional[
+        Union[
+            nonbonded.LennardJonesHandler,
+            nonbonded.MMSystemLJHandler,
+        ]
+    ]
+    lj_handle_intra: Optional[
+        Union[
+            nonbonded.LennardJonesIntraHandler,
+            nonbonded.MMSystemLJHandler,
+        ]
+    ]
+    lj_handle_solv: Optional[
+        Union[
+            nonbonded.LennardJonesSolventHandler,
+            nonbonded.MMSystemLJHandler,
+        ]
+    ]
 
     protein_ff: Union[str, Iterable[str]]
     water_ff: str
