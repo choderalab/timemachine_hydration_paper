@@ -3,6 +3,13 @@ import numpy as np
 from timemachine.ff.handlers.serialize import SerializableMixIn
 from timemachine.ff.handlers.suffix import _SUFFIX
 from timemachine.ff.handlers.utils import canonicalize_bond, match_smirks
+from timemachine.openmm_deserializer import value
+
+from openff.toolkit.topology import Molecule
+from openff.interchange.components.interchange import Interchange
+from openff.units.openmm import to_openmm
+from openff.toolkit.typing.engines.smirnoff import ForceField
+from openff.interchange.smirnoff import _valence as off_valence
 
 
 def generate_vd_idxs(mol, smirks):
@@ -25,6 +32,36 @@ def generate_vd_idxs(mol, smirks):
 
     return bond_idxs, param_idxs
 
+def smirnoff_interchange(mol):
+    return Interchange.from_smirnoff(mol.to_topology(), charge_from_molecules = [mol], allow_nonintegral_charges=True)
+
+def generate_off_idxs_params(collection):
+    """Generate bonded indices from a Smirnoff collection object: see
+    https://docs.openforcefield.org/projects/interchange/en/stable/_autosummary/openff.interchange.components.potentials.Collection.html"""
+    bond_idxs = []
+    params = []
+    for bond_key, potential_key in collection.key_map.items():
+        bond_idxs.append(bond_key.atom_indices)
+        potential = collection.potentials[potential_key]
+        if isinstance(collection, off_valence.SMIRNOFFBondCollection):
+            k, length = (value(to_openmm(potential.parameters['k'])), 
+                         value(to_openmm(potential_parameters['length'])))
+            params.append((k, length))
+        elif isinstance(collection, off_valence.SMIRNOFFAngleCollection):
+            k, angle = (value(to_openmm(potential.parameters['k'])), 
+                         value(to_openmm(potential_parameters['angle'])))
+            params.append((k, angle))
+        elif (isinstance(collection, off_valence.SMIRNOFFProperTorsionCollection) or
+              isinstance(collection, off_valence.SMIRNOFFImproperTorsionCollection)):
+            k, phase, period = (value(to_openmm(potential.parameters['k'])),
+                                value(to_openmm(potential.parameters['phase'])),
+                                value(to_openmm(potential.parameters['periodicity'])))
+            params.append((k, phase, period))
+        else:
+            raise NotImplementedError(f"collection {collection.__class__.__name__} is not implemented.")
+
+        return np.array(bond_idxs, dtype=np.int32), np.array(params, dtype=np.float64)
+    
 
 # its trivial to re-use this for everything except the ImproperTorsions
 class ReversibleBondHandler(SerializableMixIn):
@@ -66,6 +103,40 @@ class ReversibleBondHandler(SerializableMixIn):
 
         bond_idxs, param_idxs = generate_vd_idxs(mol, smirks)
         return params[param_idxs], bond_idxs
+
+class OFFReversibleBondHandler:
+    num_params = None
+    num_particles_per_term = None
+    collection_key = None
+    
+    def __init__(self, small_molecule_forcefield: str):
+        try:
+        self.ff = ForceField(f"{small_molecule_forcefield}.offxml")
+        except:
+            raise NotImplementedError(f"{small_molecule_forcefield} is not recognized")
+
+    def partial_parameterize(self, _, mol):
+        return self.static_parameterize(_, _, mol)
+
+    def parameterize(self, mol):
+        return self.static_parameterize(_, _, mol)
+
+    def serialize(self): # empty
+        return {}
+
+    def static_parameterize(_nothing1, _nothing2, mol):
+        interchange = smirnoff_interchange(mol)
+        if interchange.get(collections, self.collection_key):
+            idxs, params = generate_off_idxs_params(interchange.collections['Bonds'])
+        else:
+            idxs, params = None, None
+
+        if (not idxs) or len(idxs) == 0:
+            idxs = np.zeros((0,self.num_particles_per_term), dtype=np.int32)
+            params = np.zeros((0,self.num_params), dtype=np.float64)
+        return params, idxs
+            
+        
 
 
 # we need to subclass to get the names backout
@@ -257,3 +328,25 @@ class ImproperTorsionHandler(SerializableMixIn):
             improper_idxs = np.zeros((0, 4), dtype=np.int32)
 
         return assigned_params, improper_idxs
+
+class OFFHarmonicBondHandler(OFFReversibleBondHandler):
+    num_params = 2
+    num_particles_per_term = 2
+    collection_key = 'Bonds'
+
+
+class OFFHarmonicAngleHandler(OFFReversibleBondHandler):
+    num_params = 2
+    num_particles_per_term = 3
+    collection_key = 'Angles'
+
+
+class OFFProperTorsionHandler(OFFReversibleBondHandler):
+    num_params = 3
+    num_particles_per_term = 4
+    collection_key = 'ProperTorsions'
+
+
+class OFFImproperTorsionHandler(OFFProperTorsionHandler):
+    pass # same as above; i.e. do not need to handle irreversibility
+        
