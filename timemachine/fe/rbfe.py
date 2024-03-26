@@ -35,7 +35,7 @@ from timemachine.fe.plots import (
 )
 from timemachine.fe.single_topology import SingleTopology
 from timemachine.fe.system import VacuumSystem, convert_omm_system
-from timemachine.fe.utils import bytes_to_id, get_mol_name, get_romol_conf
+from timemachine.fe.utils import bytes_to_id, get_mol_name, get_romol_conf, pass_mol_as_rdkit
 from timemachine.ff import Forcefield
 from timemachine.lib import LangevinIntegrator, MonteCarloBarostat
 from timemachine.md import builders, minimizer
@@ -53,15 +53,6 @@ MAX_SEED_VALUE = 10000
 DEFAULT_MD_PARAMS = MDParams(n_frames=1000, n_eq_steps=10_000, steps_per_frame=400, seed=2023, hrex_params=None)
 
 DEFAULT_HREX_PARAMS = replace(DEFAULT_MD_PARAMS, hrex_params=HREXParams(n_frames_bisection=100, n_frames_per_iter=1))
-
-def pass_mol_as_rdkit(mol: Union[Chem.rdchem.Mol, Molecule]) -> Chem.rdchem.Mol:
-    if isinstance(mol, Molecule):
-        out_mol = mol.to_rdkit()
-    elif isinstance(mol, Chem.rdchem.Mol):
-        out_mol = mol
-    else:
-        raise NotImplementedError(f"mol is neither an openff nor rdkit type mol; is {type(mol)}")
-    return out_mol
 
 
 @dataclass
