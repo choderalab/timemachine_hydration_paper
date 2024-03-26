@@ -9,11 +9,10 @@ from timemachine import potentials
 from timemachine.constants import DEFAULT_CHIRAL_ATOM_RESTRAINT_K, DEFAULT_CHIRAL_BOND_RESTRAINT_K
 from timemachine.fe import chiral_utils
 from timemachine.fe.system import VacuumSystem
-from timemachine.fe.utils import get_romol_conf
+from timemachine.fe.utils import get_romol_conf, pass_mol_as_rdkit
 from timemachine.ff.handlers import nonbonded
 from timemachine.potentials.nonbonded import combining_rule_epsilon, combining_rule_sigma
 from timemachine.potentials.types import Params
-from timemachine.fe.rbfe import pass_mol_as_rdkit
 
 _SCALE_12 = 1.0
 _SCALE_13 = 1.0
