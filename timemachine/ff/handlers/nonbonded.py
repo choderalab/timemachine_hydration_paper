@@ -422,7 +422,7 @@ class LennardJonesHandler(NonbondedHandler):
         return jnp.stack([sigmas / 2, epsilons], axis=1)
 
 
-class PrecomputedLennardJonesHandler:
+class OFFPrecomputedLennardJonesHandler:
     def __init__(self, 
                  small_molecule_forcefield: str = "openff_unconstrained-2.0.0"):
         try:
