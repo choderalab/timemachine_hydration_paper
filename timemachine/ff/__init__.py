@@ -7,7 +7,7 @@ from warnings import warn
 from timemachine.constants import DEFAULT_FF, DEFAULT_PROTEIN_FF, DEFAULT_WATER_FF
 from timemachine.ff.handlers import bonded, nonbonded
 from timemachine.ff.handlers.deserialize import deserialize_handlers
-from timemachine.ff.handlers.nonbonded import PrecomputedChargeHandler
+from timemachine.ff.handlers.nonbonded import PrecomputedChargeHandler, OFFPrecomputedLennardJonesHandler
 from timemachine.ff.handlers.serialize import serialize_handlers
 
 _T = TypeVar("_T")
@@ -48,10 +48,10 @@ class Forcefield:
     Utility class for wrapping around a list of ff_handlers
     """
 
-    hb_handle: Optional[bonded.HarmonicBondHandler]
-    ha_handle: Optional[bonded.HarmonicAngleHandler]
-    pt_handle: Optional[bonded.ProperTorsionHandler]
-    it_handle: Optional[bonded.ImproperTorsionHandler]
+    hb_handle: Optional[Union[bonded.HarmonicBondHandler, bonded.OFFHarmonicBondHandler]]
+    ha_handle: Optional[Union[bonded.HarmonicAngleHandler, bonded.OFFHarmonicAngleHandler]]
+    pt_handle: Optional[Union[bonded.ProperTorsionHandler, bonded.OFFProperTorsionHandler]]
+    it_handle: Optional[Union[bonded.ImproperTorsionHandler, bonded.OFFImproperTorsionHandler]]
     q_handle: Optional[
         Union[
             nonbonded.SimpleChargeHandler,
@@ -76,9 +76,9 @@ class Forcefield:
             nonbonded.PrecomputedChargeHandler,
         ]
     ]
-    lj_handle: Optional[nonbonded.LennardJonesHandler]
-    lj_handle_intra: Optional[nonbonded.LennardJonesIntraHandler]
-    lj_handle_solv: Optional[nonbonded.LennardJonesSolventHandler]
+    lj_handle: Optional[Union[nonbonded.LennardJonesHandler, nonbonded.OFFPrecomputedLennardJonesHandler]]
+    lj_handle_intra: Optional[Union[nonbonded.LennardJonesHandler, nonbonded.OFFPrecomputedLennardJonesHandler]]
+    lj_handle_solv: Optional[Union[nonbonded.LennardJonesHandler, nonbonded.OFFPrecomputedLennardJonesHandler]]
 
     protein_ff: str
     water_ff: str
@@ -145,6 +145,33 @@ class Forcefield:
             lj_handle=ff.lj_handle,
             lj_handle_solv=ff.lj_handle_solv,
             lj_handle_intra=ff.lj_handle_intra,
+            protein_ff=ff.protein_ff,
+            water_ff=ff.water_ff,
+        )
+
+    @classmethod
+    def load_precomputed_off_default(cls, small_molecule_forcefield: str = "openff_unconstrained-2.0.0"):
+        ff = cls.load_default()
+
+        q_handle = PrecomputedChargeHandler()
+        q_handle_intra = PrecomputedChargeHandler()
+        q_handle_solv = PrecomputedChargeHandler()
+
+        lj_handle = OFFPrecomputedLennardJonesHandler(small_molecule_forcefield)
+        lj_handle_solv = OFFPrecomputedLennardJonesHandler(small_molecule_forcefield)
+        lj_handle_intra = OFFPrecomputedLennardJonesHandler(small_molecule_forcefield)
+        
+        return Forcefield(
+            hb_handle=bonded.OFFHarmonicBondHandler(small_molecule_forcefield),
+            ha_handle=bonded.OFFHarmonicAngleHandler(small_molecule_forcefield),
+            pt_handle=bonded.OFFProperTorsionHandler(small_molecule_forcefield),
+            it_handle=bonded.OFFImproperTorsionHandler(small_molecule_forcefield),
+            q_handle=q_handle,
+            q_handle_intra=q_handle_intra,
+            q_handle_solv=q_handle_solv,
+            lj_handle=lj_handle,
+            lj_handle_intra=lj_handle_intra,
+            lj_handle_solv=lj_handle_solv,
             protein_ff=ff.protein_ff,
             water_ff=ff.water_ff,
         )
