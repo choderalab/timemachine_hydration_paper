@@ -3,7 +3,7 @@ import numpy as np
 from timemachine.ff.handlers.serialize import SerializableMixIn
 from timemachine.ff.handlers.suffix import _SUFFIX
 from timemachine.ff.handlers.utils import canonicalize_bond, match_smirks
-from timemachine.openmm_deserializer import value
+from timemachine.ff.handlers.openmm_deserializer import value
 
 from openff.toolkit.topology import Molecule
 from openff.interchange.components.interchange import Interchange
