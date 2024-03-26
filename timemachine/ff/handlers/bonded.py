@@ -109,9 +109,10 @@ class OFFReversibleBondHandler:
     num_particles_per_term = None
     collection_key = None
     
-    def __init__(self, small_molecule_forcefield: str):
+    def __init__(self, 
+                 small_molecule_forcefield: str = "openff_unconstrained-2.0.0"):
         try:
-        self.ff = ForceField(f"{small_molecule_forcefield}.offxml")
+            self.ff = ForceField(f"{small_molecule_forcefield}.offxml")
         except:
             raise NotImplementedError(f"{small_molecule_forcefield} is not recognized")
 
