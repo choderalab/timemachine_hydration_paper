@@ -14,11 +14,11 @@ from openff.toolkit.topology import Molecule
 from timemachine.constants import DEFAULT_CHIRAL_ATOM_RESTRAINT_K, DEFAULT_CHIRAL_BOND_RESTRAINT_K
 from timemachine.fe import chiral_utils, interpolate, model_utils, topology, utils
 from timemachine.fe.chiral_utils import ChiralRestrIdxSet
+from timemachine.fe.utils import pass_mol_as_rdkit
 from timemachine.fe.dummy import canonicalize_bond, generate_anchored_dummy_group_assignments
 from timemachine.fe.lambda_schedule import construct_pre_optimized_relative_lambda_schedule
 from timemachine.fe.system import HostGuestSystem, VacuumSystem
 from timemachine.fe.topology import get_ligand_ixn_pots_params
-from timemachine.fe.rbfe import pass_mol_as_rdkit
 from timemachine.potentials import (
     BoundPotential,
     ChiralAtomRestraint,
