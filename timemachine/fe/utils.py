@@ -9,8 +9,19 @@ from rdkit import Chem
 from rdkit.Chem import AllChem, Draw
 from rdkit.Chem.Draw import rdMolDraw2D
 from scipy.stats import special_ortho_group
+from openff.toolkit.topology import Molecule
 
 from timemachine import constants
+
+
+def pass_mol_as_rdkit(mol: Union[Chem.rdchem.Mol, Molecule]) -> Chem.rdchem.Mol:
+    if isinstance(mol, Molecule):
+        out_mol = mol.to_rdkit()
+    elif isinstance(mol, Chem.rdchem.Mol):
+        out_mol = mol
+    else:
+        raise NotImplementedError(f"mol is neither an openff nor rdkit type mol; is {type(mol)}")
+    return out_mol
 
 
 def convert_uIC50_to_kJ_per_mole(amount_in_uM: float, experiment_temp: float = 298.15) -> float:
