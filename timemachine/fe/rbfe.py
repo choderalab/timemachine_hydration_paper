@@ -9,6 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 from openmm import app
 from rdkit import Chem
+from openff.toolkit.topology import Molecule
 
 from timemachine.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_PRESSURE, DEFAULT_TEMP
 from timemachine.fe import atom_mapping, model_utils
@@ -42,6 +43,7 @@ from timemachine.md.barostat.utils import get_bond_list, get_group_indices
 from timemachine.parallel.client import AbstractClient, AbstractFileClient, CUDAPoolClient, FileClient
 from timemachine.potentials import BoundPotential, jax_utils
 
+
 DEFAULT_NUM_WINDOWS = 48
 
 # the constant is arbitrary, but see
@@ -51,6 +53,15 @@ MAX_SEED_VALUE = 10000
 DEFAULT_MD_PARAMS = MDParams(n_frames=1000, n_eq_steps=10_000, steps_per_frame=400, seed=2023, hrex_params=None)
 
 DEFAULT_HREX_PARAMS = replace(DEFAULT_MD_PARAMS, hrex_params=HREXParams(n_frames_bisection=100, n_frames_per_iter=1))
+
+def pass_mol_as_rdkit(mol: Union[Chem.rdchem.Mol, Molecule]) -> Chem.rdchem.Mol:
+    if isinstance(mol, Molecule):
+        out_mol = mol.to_rdkit()
+    elif isinstance(mol, Chem.rdchem.Mol):
+        out_mol = mol
+    else:
+        raise NotImplementedError(f"mol is neither an openff nor rdkit type mol; is {type(mol)}")
+    return out_mol
 
 
 @dataclass
@@ -371,8 +382,8 @@ def optimize_coordinates(initial_states, min_cutoff=0.7) -> List[NDArray]:
 
 
 def estimate_relative_free_energy(
-    mol_a: Chem.rdchem.Mol,
-    mol_b: Chem.rdchem.Mol,
+    mol_a: Union[Chem.rdchem.Mol, Molecule],
+    mol_b: Union[Chem.rdchem.Mol, Molecule],
     core: NDArray,
     ff: Forcefield,
     host_config: Optional[HostConfig],
@@ -444,7 +455,7 @@ def estimate_relative_free_energy(
     )
 
     # TODO: rename prefix to postfix, or move to beginning of combined_prefix?
-    combined_prefix = get_mol_name(mol_a) + "_" + get_mol_name(mol_b) + "_" + prefix
+    combined_prefix = get_mol_name(pass_mol_as_rdkit(mol_a)) + "_" + get_mol_name(pass_mol_as_rdkit(mol_b)) + "_" + prefix
     try:
         result, stored_trajectories = run_sims_sequential(initial_states, md_params, temperature)
         plots = make_pair_bar_plots(result, temperature, combined_prefix)
@@ -473,8 +484,8 @@ def estimate_relative_free_energy_bisection_or_hrex(*args, **kwargs) -> Simulati
 
 
 def estimate_relative_free_energy_bisection(
-    mol_a: Chem.rdchem.Mol,
-    mol_b: Chem.rdchem.Mol,
+    mol_a: Union[Chem.rdchem.Mol, Molecule],
+    mol_b: Union[Chem.rdchem.Mol, Molecule],
     core: NDArray,
     ff: Forcefield,
     host_config: Optional[HostConfig],
@@ -561,7 +572,7 @@ def estimate_relative_free_energy_bisection(
     )
 
     # TODO: rename prefix to postfix, or move to beginning of combined_prefix?
-    combined_prefix = get_mol_name(mol_a) + "_" + get_mol_name(mol_b) + "_" + prefix
+    combined_prefix = get_mol_name(pass_mol_as_rdkit(mol_a)) + "_" + get_mol_name(pass_mol_as_rdkit(mol_b)) + "_" + prefix
 
     try:
         results, trajectories = run_sims_bisection(
@@ -694,8 +705,8 @@ def estimate_relative_free_energy_bisection_hrex_impl(
 
 
 def estimate_relative_free_energy_bisection_hrex(
-    mol_a: Chem.rdchem.Mol,
-    mol_b: Chem.rdchem.Mol,
+    mol_a: Union[Chem.rdchem.Mol, Molecule],
+    mol_b: Union[Chem.rdchem.Mol, Molecule],
     core: NDArray,
     ff: Forcefield,
     host_config: Optional[HostConfig],
@@ -782,7 +793,7 @@ def estimate_relative_free_energy_bisection_hrex(
     )
 
     # TODO: rename prefix to postfix, or move to beginning of combined_prefix?
-    combined_prefix = get_mol_name(mol_a) + "_" + get_mol_name(mol_b) + "_" + prefix
+    combined_prefix = get_mol_name(pass_mol_as_rdkit(mol_a)) + "_" + get_mol_name(pass_mol_as_rdkit(mol_b)) + "_" + prefix
 
     return estimate_relative_free_energy_bisection_hrex_impl(
         temperature,
@@ -797,8 +808,8 @@ def estimate_relative_free_energy_bisection_hrex(
 
 
 def run_vacuum(
-    mol_a: Chem.rdchem.Mol,
-    mol_b: Chem.rdchem.Mol,
+    mol_a: Union[Chem.rdchem.Mol, Molecule],
+    mol_b: Union[Chem.rdchem.Mol, Molecule],
     core: NDArray,
     forcefield: Forcefield,
     _,
@@ -826,8 +837,8 @@ def run_vacuum(
 
 
 def run_solvent(
-    mol_a: Chem.rdchem.Mol,
-    mol_b: Chem.rdchem.Mol,
+    mol_a: Union[Chem.rdchem.Mol, Molecule],
+    mol_b: Union[Chem.rdchem.Mol, Molecule],
     core: NDArray,
     forcefield: Forcefield,
     _,
@@ -856,8 +867,8 @@ def run_solvent(
 
 
 def run_complex(
-    mol_a: Chem.rdchem.Mol,
-    mol_b: Chem.rdchem.Mol,
+    mol_a: Union[Chem.rdchem.Mol, Molecule],
+    mol_b: Union[Chem.rdchem.Mol, Molecule],
     core: NDArray,
     forcefield: Forcefield,
     protein: Union[app.PDBFile, str],
@@ -902,7 +913,7 @@ def get_success_result_path(mol_a_name: str, mol_b_name: str):
 
 def run_edge_and_save_results(
     edge: Edge,
-    mols: Dict[str, Chem.rdchem.Mol],
+    mols: Dict[str, Union[Chem.rdchem.Mol, Molecule]],
     forcefield: Forcefield,
     protein: app.PDBFile,
     file_client: AbstractFileClient,
@@ -918,8 +929,8 @@ def run_edge_and_save_results(
         mol_b = mols[edge.mol_b_name]
 
         all_cores = atom_mapping.get_cores(
-            mol_a,
-            mol_b,
+            pass_mol_as_rdkit(mol_a),
+            pass_mol_as_rdkit(mol_b),
             **DEFAULT_ATOM_MAPPING_KWARGS,
         )
         core = all_cores[0]
@@ -969,7 +980,7 @@ def run_edge_and_save_results(
         return file_client.full_path(path)
 
     path = get_success_result_path(edge.mol_a_name, edge.mol_b_name)
-    pkl_obj = (mol_a, mol_b, edge.metadata, core, solvent_res, solvent_top, complex_res, complex_top)
+    pkl_obj = (pass_mol_as_rdkit(mol_a), pass_mol_as_rdkit(mol_b), edge.metadata, core, solvent_res, solvent_top, complex_res, complex_top)
     file_client.store(path, pickle.dumps(pkl_obj))
 
     solvent_ddg = sum(solvent_res.final_result.dGs)
