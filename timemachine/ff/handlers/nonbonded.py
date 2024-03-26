@@ -15,6 +15,11 @@ from timemachine.ff.handlers.serialize import SerializableMixIn
 from timemachine.ff.handlers.utils import canonicalize_bond
 from timemachine.ff.handlers.utils import match_smirks as rd_match_smirks
 from timemachine.graph_utils import convert_to_nx
+from timemachine.ff.handlers.bonded import smirnoff_interchange
+from timemachine.openmm_deserializer import value
+from openff.units.openmm import to_openmm
+
+from openff.toolkit.topology import Molecule
 
 AM1_CHARGE_CACHE = "AM1Cache"
 AM1ELF10_CHARGE_CACHE = "AM1ELF10Cache"
@@ -357,6 +362,14 @@ class PrecomputedChargeHandler:
 
     def parameterize(self, mol):
         params = []
+        
+        if isinstance(mol, Molecule):
+            mol = Molecule.to_rdkit(mol)
+        elif isinstance(mol, Chem.rdchem.Mol):
+            pass
+        else:
+            raise NotImplementedError(f"mol of type {type(mol)} is not handled")
+            
         for atom in mol.GetAtoms():
             q = float(atom.GetProp("PartialCharge"))
             params.append(q * np.sqrt(constants.ONE_4PI_EPS0))
@@ -407,6 +420,29 @@ class LennardJonesHandler(NonbondedHandler):
         # the raw parameters already in sqrt form.
         # sigmas need to be divided by two
         return jnp.stack([sigmas / 2, epsilons], axis=1)
+
+
+class PrecomputedLennardJonesHandler:
+    def __init__(self, 
+                 small_molecule_forcefield: str = "openff_unconstrained-2.0.0"):
+        try:
+            self.ff = ForceField(f"{small_molecule_forcefield}.offxml")
+        except:
+            raise NotImplementedError(f"{small_molecule_forcefield} is not recognized")
+
+    def static_parameterize(self, _nothing1, _nothing2, mol):
+        interchange = smirnoff_interchange(self.ff, mol)
+        collection = interchange.collections['vdW']
+        idxs, params = [], []
+        for bond_key, potential_key in collection.key_map.items():
+            idx = bond_key.atom_indices[0]
+            potential = collection.potentials[potential_key]
+            sigma, epsilon = (value(to_openmm(potential.parameters['sigma'])),
+                              value(to_openmm(potential.parameters['epsilon'])))
+            idxs.append(idx)
+            params.append((sigma / 2, np.sqrt(epsilon)))
+        sorted_idxs_args = np.argsort(np.array(idxs, dtype=np.int32))
+        return np.array(params, dtype=np.float64)[sorted_idxs_args, :]
 
 
 class LennardJonesIntraHandler(LennardJonesHandler):
