@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple
 import jax.numpy as jnp
 import numpy as np
 from numpy.typing import NDArray
+from openff.toolkit.topology import Molecule
 
 from timemachine import potentials
 from timemachine.constants import DEFAULT_CHIRAL_ATOM_RESTRAINT_K, DEFAULT_CHIRAL_BOND_RESTRAINT_K
@@ -12,6 +13,7 @@ from timemachine.fe.utils import get_romol_conf
 from timemachine.ff.handlers import nonbonded
 from timemachine.potentials.nonbonded import combining_rule_epsilon, combining_rule_sigma
 from timemachine.potentials.types import Params
+from timemachine.fe.rbfe import pass_mol_as_rdkit
 
 _SCALE_12 = 1.0
 _SCALE_13 = 1.0
@@ -236,15 +238,17 @@ class BaseTopology:
 
         Parameter
         ---------
-        mol: ROMol
+        mol: ROMol or Molecule
             Ligand to be parameterized
 
         forcefield: ff.Forcefield
             A convenience wrapper for forcefield lists.
 
         """
-        self.mol = mol
+        self.mol = pass_mol_as_rdkit(mol)
         self.ff = forcefield
+        self.mol_off = mol if isinstance(mol, Molecule) else None
+        
 
     def get_num_atoms(self):
         return self.mol.GetNumAtoms()
@@ -267,12 +271,13 @@ class BaseTopology:
         lamb: float,
         intramol_params=True,
     ):
+        param_mol = self.mol if not self.mol_off else self.mol_off
         if intramol_params:
-            q_params = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, self.mol)
-            lj_params = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, self.mol)
+            q_params = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, param_mol)
+            lj_params = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, param_mol)
         else:
-            q_params = self.ff.q_handle.partial_parameterize(ff_q_params, self.mol)
-            lj_params = self.ff.lj_handle.partial_parameterize(ff_lj_params, self.mol)
+            q_params = self.ff.q_handle.partial_parameterize(ff_q_params, param_mol)
+            lj_params = self.ff.lj_handle.partial_parameterize(ff_lj_params, param_mol)
 
         exclusion_idxs, scale_factors = nonbonded.generate_exclusion_idxs(
             self.mol, scale12=_SCALE_12, scale13=_SCALE_13, scale14=_SCALE_14
@@ -299,6 +304,8 @@ class BaseTopology:
         Generate intramolecular nonbonded pairlist, and is mostly identical to the above
         except implemented as a pairlist.
         """
+        param_mol = self.mol if not self.mol_off else self.mol_off
+        
         # use same scale factors for electrostatics and vdWs
         exclusion_idxs, scale_factors = nonbonded.generate_exclusion_idxs(
             self.mol, scale12=_SCALE_12, scale13=_SCALE_13, scale14=_SCALE_14
@@ -325,11 +332,11 @@ class BaseTopology:
         inclusion_idxs = np.array(inclusion_idxs).reshape(-1, 2).astype(np.int32)
 
         if intramol_params:
-            q_params = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, self.mol)
-            lj_params = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, self.mol)
+            q_params = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, param_mol)
+            lj_params = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, param_mol)
         else:
-            q_params = self.ff.q_handle.partial_parameterize(ff_q_params, self.mol)
-            lj_params = self.ff.lj_handle.partial_parameterize(ff_lj_params, self.mol)
+            q_params = self.ff.q_handle.partial_parameterize(ff_q_params, param_mol)
+            lj_params = self.ff.lj_handle.partial_parameterize(ff_lj_params, param_mol)
 
         sig_params = lj_params[:, 0]
         eps_params = lj_params[:, 1]
@@ -363,19 +370,23 @@ class BaseTopology:
         return params, potentials.NonbondedPairListPrecomputed(inclusion_idxs, beta, cutoff)
 
     def parameterize_harmonic_bond(self, ff_params):
-        params, idxs = self.ff.hb_handle.partial_parameterize(ff_params, self.mol)
+        param_mol = self.mol if not self.mol_off else self.mol_off
+        params, idxs = self.ff.hb_handle.partial_parameterize(ff_params, param_mol)
         return params, potentials.HarmonicBond(idxs)
 
     def parameterize_harmonic_angle(self, ff_params):
-        params, idxs = self.ff.ha_handle.partial_parameterize(ff_params, self.mol)
+        param_mol = self.mol if not self.mol_off else self.mol_off
+        params, idxs = self.ff.ha_handle.partial_parameterize(ff_params, param_mol)
         return params, potentials.HarmonicAngle(idxs)
 
     def parameterize_proper_torsion(self, ff_params):
-        params, idxs = self.ff.pt_handle.partial_parameterize(ff_params, self.mol)
+        param_mol = self.mol if not self.mol_off else self.mol_off
+        params, idxs = self.ff.pt_handle.partial_parameterize(ff_params, param_mol)
         return params, potentials.PeriodicTorsion(idxs)
 
     def parameterize_improper_torsion(self, ff_params):
-        params, idxs = self.ff.it_handle.partial_parameterize(ff_params, self.mol)
+        param_mol = self.mol if not self.mol_off else self.mol_off
+        params, idxs = self.ff.it_handle.partial_parameterize(ff_params, param_mol)
         return params, potentials.PeriodicTorsion(idxs)
 
     def parameterize_periodic_torsion(self, proper_params, improper_params):
