@@ -32,8 +32,8 @@ def generate_vd_idxs(mol, smirks):
 
     return bond_idxs, param_idxs
 
-def smirnoff_interchange(mol):
-    return Interchange.from_smirnoff(mol.to_topology(), charge_from_molecules = [mol], allow_nonintegral_charges=True)
+def smirnoff_interchange(ff, mol):
+    return Interchange.from_smirnoff(ff, mol.to_topology(), charge_from_molecules = [mol], allow_nonintegral_charges=True)
 
 def generate_off_idxs_params(collection):
     """Generate bonded indices from a Smirnoff collection object: see
@@ -126,7 +126,7 @@ class OFFReversibleBondHandler:
         return {}
 
     def static_parameterize(_nothing1, _nothing2, mol):
-        interchange = smirnoff_interchange(mol)
+        interchange = smirnoff_interchange(self.ff, mol)
         if interchange.get(collections, self.collection_key):
             idxs, params = generate_off_idxs_params(interchange.collections['Bonds'])
         else:
