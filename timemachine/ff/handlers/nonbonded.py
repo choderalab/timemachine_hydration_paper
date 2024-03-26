@@ -16,7 +16,7 @@ from timemachine.ff.handlers.utils import canonicalize_bond
 from timemachine.ff.handlers.utils import match_smirks as rd_match_smirks
 from timemachine.graph_utils import convert_to_nx
 from timemachine.ff.handlers.bonded import smirnoff_interchange
-from timemachine.openmm_deserializer import value
+from timemachine.ff.handlers.openmm_deserializer import value
 from openff.units.openmm import to_openmm
 
 from openff.toolkit.topology import Molecule
