@@ -9,6 +9,7 @@ import networkx as nx
 import numpy as np
 from numpy.typing import NDArray
 from rdkit import Chem
+from openff.toolkit.topology import Molecule
 
 from timemachine.constants import DEFAULT_CHIRAL_ATOM_RESTRAINT_K, DEFAULT_CHIRAL_BOND_RESTRAINT_K
 from timemachine.fe import chiral_utils, interpolate, model_utils, topology, utils
@@ -17,6 +18,7 @@ from timemachine.fe.dummy import canonicalize_bond, generate_anchored_dummy_grou
 from timemachine.fe.lambda_schedule import construct_pre_optimized_relative_lambda_schedule
 from timemachine.fe.system import HostGuestSystem, VacuumSystem
 from timemachine.fe.topology import get_ligand_ixn_pots_params
+from timemachine.fe.rbfe import pass_mol_as_rdkit
 from timemachine.potentials import (
     BoundPotential,
     ChiralAtomRestraint,
@@ -320,10 +322,10 @@ def setup_end_state(ff, mol_a, mol_b, core, a_to_c, b_to_c):
     ff: forcefield.Forcefield
         Forcefield used to parameterize the molecule
 
-    mol_a: Chem.Mol
+    mol_a: Chem.Mol or Molecule
         Fully interacting molecule
 
-    mol_b: Chem.Mol
+    mol_b: Chem.Mol or Molecule
         Molecule providing the dummy atoms.
 
     core: list of 2-tuples
@@ -341,13 +343,12 @@ def setup_end_state(ff, mol_a, mol_b, core, a_to_c, b_to_c):
         A parameterized system in the vacuum.
 
     """
-
     all_dummy_bond_idxs, all_dummy_bond_params = [], []
     all_dummy_angle_idxs, all_dummy_angle_params = [], []
     all_dummy_improper_idxs, all_dummy_improper_params = [], []
     all_dummy_chiral_atom_idxs, all_dummy_chiral_atom_params = [], []
 
-    dummy_groups = find_dummy_groups_and_anchors(mol_a, mol_b, core[:, 0], core[:, 1])
+    dummy_groups = find_dummy_groups_and_anchors(pass_mol_as_rdkit(mol_a), pass_mol_as_rdkit(mol_b), core[:, 0], core[:, 1])
     # gotta add 'em all!
 
     for anchor, (nbr, dg) in dummy_groups.items():
@@ -493,7 +494,7 @@ def setup_end_state(ff, mol_a, mol_b, core, a_to_c, b_to_c):
     chiral_atom_potential = ChiralAtomRestraint(chiral_atom_idxs).bind(mol_c_chiral_atom_params)
     chiral_bond_potential = ChiralBondRestraint(chiral_bond_idxs, chiral_bond_signs).bind(mol_a_chiral_bond.params)
 
-    num_atoms = mol_a.GetNumAtoms() + mol_b.GetNumAtoms() - len(core)
+    num_atoms = pass_mol_as_rdkit(mol_a).GetNumAtoms() + pass_mol_as_rdkit(mol_b).GetNumAtoms() - len(core)
     assert (
         get_num_connected_components(num_atoms, bond_potential.potential.idxs) == 1
     ), "hybrid molecule has multiple connected components"
@@ -817,6 +818,8 @@ class AtomMapMixin:
 
     self.mol_a
     self.mol_b
+    self.mol_a_off
+    self.mol_b_off
     self.core
     self.a_to_c
     self.b_to_c
@@ -830,12 +833,18 @@ class AtomMapMixin:
         assert mol_a is not None
         assert mol_b is not None
 
-        self.mol_a = mol_a
-        self.mol_b = mol_b
+        self.mol_a = pass_mol_as_rdkit(mol_a)
+        self.mol_b = pass_mol_as_rdkit(mol_b)
         self.core = core
         assert mol_a is not None
         assert mol_b is not None
         assert core.shape[1] == 2
+
+        self.mol_a_off = mol_a if isinstance(mol_a, Molecule) else None
+        self.mol_b_off = mol_b if isinstance(mol_b, Molecule) else None
+
+        self.param_mol_a = self.mol_a if not self.mol_a_off else self.mol_a_off
+        self.param_mol_b = self.mol_b if not self.mol_b_off else self.mol_b_off
 
         # map into idxs in the combined molecule
 
@@ -901,10 +910,10 @@ class SingleTopology(AtomMapMixin):
 
         Parameters
         ----------
-        mol_a: ROMol
+        mol_a: ROMol or Molecule
             First guest
 
-        mol_b: ROMol
+        mol_b: ROMol or Molecule
             Second guest
 
         core: np.array (C, 2)
@@ -1010,10 +1019,11 @@ class SingleTopology(AtomMapMixin):
         # with HMR, apply to each molecule independently
         # then use the larger value for core atoms and the
         # HMR value for dummy atoms
+        
         if use_hmr:
             # Can't use src_system, dst_system as these have dummy atoms attached
-            mol_a_top = topology.BaseTopology(self.mol_a, self.ff)
-            mol_b_top = topology.BaseTopology(self.mol_b, self.ff)
+            mol_a_top = topology.BaseTopology(self.param_mol_a, self.ff)
+            mol_b_top = topology.BaseTopology(self.param_mol_b, self.ff)
             _, mol_a_hb = mol_a_top.parameterize_harmonic_bond(self.ff.hb_handle.params)
             _, mol_b_hb = mol_b_top.parameterize_harmonic_bond(self.ff.hb_handle.params)
 
@@ -1107,7 +1117,7 @@ class SingleTopology(AtomMapMixin):
         VacuumSystem
             Gas-phase system
         """
-        return setup_end_state(self.ff, self.mol_a, self.mol_b, self.core, self.a_to_c, self.b_to_c)
+        return setup_end_state(self.ff, self.param_mol_a, self.param_mol_b, self.core, self.a_to_c, self.b_to_c)
 
     def _setup_end_state_dst(self):
         """
@@ -1119,7 +1129,7 @@ class SingleTopology(AtomMapMixin):
         VacuumSystem
             Gas-phase system
         """
-        return setup_end_state(self.ff, self.mol_b, self.mol_a, self.core[:, ::-1], self.b_to_c, self.a_to_c)
+        return setup_end_state(self.ff, self.param_mol_b, self.param_mol_a, self.core[:, ::-1], self.b_to_c, self.a_to_c)
 
     def _setup_intermediate_bonded_term(
         self, src_bond: BoundPotential[_Bonded], dst_bond: BoundPotential[_Bonded], lamb, align_fn, interpolate_fn
@@ -1360,11 +1370,11 @@ class SingleTopology(AtomMapMixin):
         guest_w_coords = []
 
         # generate charges and lj parameters for each guest
-        guest_a_q = q_handle.parameterize(self.mol_a)
-        guest_a_lj = lj_handle.parameterize(self.mol_a)
+        guest_a_q = q_handle.parameterize(self.param_mol_a)
+        guest_a_lj = lj_handle.parameterize(self.param_mol_a)
 
-        guest_b_q = q_handle.parameterize(self.mol_b)
-        guest_b_lj = lj_handle.parameterize(self.mol_b)
+        guest_b_q = q_handle.parameterize(self.param_mol_b)
+        guest_b_lj = lj_handle.parameterize(self.param_mol_b)
 
         for idx, membership in enumerate(self.c_flags):
             if membership == 0:  # core atom
