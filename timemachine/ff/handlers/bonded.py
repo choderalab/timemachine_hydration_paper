@@ -109,8 +109,11 @@ class OFFReversibleBondHandler:
     num_particles_per_term = None
     collection_key = None
     
-    def __init__(self, 
-                 small_molecule_forcefield: str = "openff_unconstrained-2.0.0"):
+    def __init__(self, small_molecule_forcefield: str = "openff_unconstrained-2.0.0"):
+        self.smirks = None
+        self.params = None
+        self.props = None
+        self.counts = None # for torsions, but otherwise unused
         try:
             self.ff = ForceField(f"{small_molecule_forcefield}.offxml")
         except:
@@ -120,7 +123,7 @@ class OFFReversibleBondHandler:
         return self.static_parameterize(_, _, mol)
 
     def parameterize(self, mol):
-        return self.static_parameterize(_, _, mol)
+        return self.static_parameterize(None, None, mol)
 
     def serialize(self): # empty
         return {}
@@ -136,8 +139,6 @@ class OFFReversibleBondHandler:
             idxs = np.zeros((0,self.num_particles_per_term), dtype=np.int32)
             params = np.zeros((0,self.num_params), dtype=np.float64)
         return params, idxs
-            
-        
 
 
 # we need to subclass to get the names backout
