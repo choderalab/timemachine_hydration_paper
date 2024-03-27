@@ -433,6 +433,12 @@ class OFFPrecomputedLennardJonesHandler:
 
         self.params = None # need this like in `PrecomputedChargeHandler`
 
+    def parameterize(self, mol):
+        return self.static_parameterize(None, None, mol)
+
+    def partial_parameterize(self, _, mol):
+        return self.parameterize(mol)
+
     def static_parameterize(self, _nothing1, _nothing2, mol):
         interchange = smirnoff_interchange(self.ff, mol)
         collection = interchange.collections['vdW']
