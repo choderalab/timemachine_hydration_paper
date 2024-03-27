@@ -926,8 +926,8 @@ class SingleTopology(AtomMapMixin):
         # store the forcefield
         self.ff = forcefield
 
-        a_charge = Chem.GetFormalCharge(mol_a)
-        b_charge = Chem.GetFormalCharge(mol_b)
+        a_charge = Chem.GetFormalCharge(self.mol_a)
+        b_charge = Chem.GetFormalCharge(self.mol_b)
         if a_charge != b_charge:
             raise ChargePertubationError(f"mol a and mol b don't have the same charge: a: {a_charge} b: {b_charge}")
 
