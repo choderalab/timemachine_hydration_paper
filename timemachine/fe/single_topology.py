@@ -836,8 +836,6 @@ class AtomMapMixin:
         self.mol_a = pass_mol_as_rdkit(mol_a)
         self.mol_b = pass_mol_as_rdkit(mol_b)
         self.core = core
-        assert mol_a is not None
-        assert mol_b is not None
         assert core.shape[1] == 2
 
         self.mol_a_off = mol_a if isinstance(mol_a, Molecule) else None
@@ -848,8 +846,8 @@ class AtomMapMixin:
 
         # map into idxs in the combined molecule
 
-        self.a_to_c = np.arange(mol_a.GetNumAtoms(), dtype=np.int32)  # identity
-        self.b_to_c = np.zeros(mol_b.GetNumAtoms(), dtype=np.int32) - 1
+        self.a_to_c = np.arange(self.mol_a.GetNumAtoms(), dtype=np.int32)  # identity
+        self.b_to_c = np.zeros(self.mol_b.GetNumAtoms(), dtype=np.int32) - 1
 
         # mark membership:
         # 0: Core
