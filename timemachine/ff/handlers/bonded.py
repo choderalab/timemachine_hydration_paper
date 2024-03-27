@@ -8,7 +8,7 @@ from timemachine.ff.handlers.openmm_deserializer import value
 from openff.toolkit.topology import Molecule
 from openff.interchange.components.interchange import Interchange
 from openff.units.openmm import to_openmm
-from openff.toolkit.typing.engines.smirnoff import ForceField
+from openff.toolkit.typing.engines.smirnoff import ForceField as off_Forcefield
 from openff.interchange.smirnoff import _valence as off_valence
 
 
@@ -115,7 +115,7 @@ class OFFReversibleBondHandler:
         self.props = None
         self.counts = None # for torsions, but otherwise unused
         try:
-            self.ff = ForceField(f"{small_molecule_forcefield}.offxml")
+            self.ff = off_Forcefield(f"{small_molecule_forcefield}.offxml")
         except:
             raise NotImplementedError(f"{small_molecule_forcefield} is not recognized")
 
