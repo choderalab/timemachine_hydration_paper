@@ -431,6 +431,8 @@ class OFFPrecomputedLennardJonesHandler:
         except:
             raise NotImplementedError(f"{small_molecule_forcefield} is not recognized")
 
+        self.params = None # need this like in `PrecomputedChargeHandler`
+
     def static_parameterize(self, _nothing1, _nothing2, mol):
         interchange = smirnoff_interchange(self.ff, mol)
         collection = interchange.collections['vdW']
