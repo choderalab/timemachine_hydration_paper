@@ -20,6 +20,7 @@ from timemachine.ff.handlers.openmm_deserializer import value
 from openff.units.openmm import to_openmm
 
 from openff.toolkit.topology import Molecule
+from openff.toolkit.typing.engines.smirnoff import ForceField as off_Forcefield
 
 AM1_CHARGE_CACHE = "AM1Cache"
 AM1ELF10_CHARGE_CACHE = "AM1ELF10Cache"
@@ -426,7 +427,7 @@ class OFFPrecomputedLennardJonesHandler:
     def __init__(self, 
                  small_molecule_forcefield: str = "openff_unconstrained-2.0.0"):
         try:
-            self.ff = ForceField(f"{small_molecule_forcefield}.offxml")
+            self.ff = off_Forcefield(f"{small_molecule_forcefield}.offxml")
         except:
             raise NotImplementedError(f"{small_molecule_forcefield} is not recognized")
 
