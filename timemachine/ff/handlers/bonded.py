@@ -136,7 +136,7 @@ class OFFReversibleBondHandler:
         else:
             idxs, params = None, None
 
-        if (not idxs) or len(idxs) == 0:
+        if idxs is None or len(idxs) == 0:
             idxs = np.zeros((0,self.num_particles_per_term), dtype=np.int32)
             params = np.zeros((0,self.num_params), dtype=np.float64)
         return params, idxs
