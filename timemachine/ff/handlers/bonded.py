@@ -130,8 +130,9 @@ class OFFReversibleBondHandler:
 
     def static_parameterize(self, _nothing1, _nothing2, mol):
         interchange = smirnoff_interchange(self.ff, mol)
-        if interchange.get(collections, self.collection_key):
-            idxs, params = generate_off_idxs_params(interchange.collections['Bonds'])
+        if interchange.collections.get(self.collection_key):
+            _handle = interchange.collections.get(self.collection_key)
+            idxs, params = generate_off_idxs_params(_handle)
         else:
             idxs, params = None, None
 
