@@ -45,11 +45,11 @@ def generate_off_idxs_params(collection):
         potential = collection.potentials[potential_key]
         if isinstance(collection, off_valence.SMIRNOFFBondCollection):
             k, length = (value(to_openmm(potential.parameters['k'])), 
-                         value(to_openmm(potential_parameters['length'])))
+                         value(to_openmm(potential.parameters['length'])))
             params.append((k, length))
         elif isinstance(collection, off_valence.SMIRNOFFAngleCollection):
             k, angle = (value(to_openmm(potential.parameters['k'])), 
-                         value(to_openmm(potential_parameters['angle'])))
+                         value(to_openmm(potential.parameters['angle'])))
             params.append((k, angle))
         elif (isinstance(collection, off_valence.SMIRNOFFProperTorsionCollection) or
               isinstance(collection, off_valence.SMIRNOFFImproperTorsionCollection)):
