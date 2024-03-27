@@ -60,7 +60,7 @@ def generate_off_idxs_params(collection):
         else:
             raise NotImplementedError(f"collection {collection.__class__.__name__} is not implemented.")
 
-        return np.array(bond_idxs, dtype=np.int32), np.array(params, dtype=np.float64)
+    return np.array(bond_idxs, dtype=np.int32), np.array(params, dtype=np.float64)
     
 
 # its trivial to re-use this for everything except the ImproperTorsions
@@ -350,6 +350,8 @@ class OFFProperTorsionHandler(OFFReversibleBondHandler):
     collection_key = 'ProperTorsions'
 
 
-class OFFImproperTorsionHandler(OFFProperTorsionHandler):
-    pass # same as above; i.e. do not need to handle irreversibility
-        
+class OFFImproperTorsionHandler(OFFReversibleBondHandler):
+    num_params = 3
+    num_particles_per_term = 4
+    collection_key = 'ImproperTorsions'
+    
