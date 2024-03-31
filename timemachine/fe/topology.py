@@ -247,6 +247,7 @@ class BaseTopology:
         self.mol = pass_mol_as_rdkit(mol)
         self.ff = forcefield
         self.mol_off = mol if isinstance(mol, Molecule) else None
+        self.param_mol = self.mol if not self.mol_off else self.mol_off
         
 
     def get_num_atoms(self):
@@ -270,13 +271,12 @@ class BaseTopology:
         lamb: float,
         intramol_params=True,
     ):
-        param_mol = self.mol if not self.mol_off else self.mol_off
         if intramol_params:
-            q_params = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, param_mol)
-            lj_params = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, param_mol)
+            q_params = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, self.param_mol)
+            lj_params = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, self.param_mol)
         else:
-            q_params = self.ff.q_handle.partial_parameterize(ff_q_params, param_mol)
-            lj_params = self.ff.lj_handle.partial_parameterize(ff_lj_params, param_mol)
+            q_params = self.ff.q_handle.partial_parameterize(ff_q_params, self.param_mol)
+            lj_params = self.ff.lj_handle.partial_parameterize(ff_lj_params, self.param_mol)
 
         exclusion_idxs, scale_factors = nonbonded.generate_exclusion_idxs(
             self.mol, scale12=_SCALE_12, scale13=_SCALE_13, scale14=_SCALE_14
@@ -303,7 +303,6 @@ class BaseTopology:
         Generate intramolecular nonbonded pairlist, and is mostly identical to the above
         except implemented as a pairlist.
         """
-        param_mol = self.mol if not self.mol_off else self.mol_off
         
         # use same scale factors for electrostatics and vdWs
         exclusion_idxs, scale_factors = nonbonded.generate_exclusion_idxs(
@@ -331,11 +330,11 @@ class BaseTopology:
         inclusion_idxs = np.array(inclusion_idxs).reshape(-1, 2).astype(np.int32)
 
         if intramol_params:
-            q_params = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, param_mol)
-            lj_params = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, param_mol)
+            q_params = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, self.param_mol)
+            lj_params = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, self.param_mol)
         else:
-            q_params = self.ff.q_handle.partial_parameterize(ff_q_params, param_mol)
-            lj_params = self.ff.lj_handle.partial_parameterize(ff_lj_params, param_mol)
+            q_params = self.ff.q_handle.partial_parameterize(ff_q_params, self.param_mol)
+            lj_params = self.ff.lj_handle.partial_parameterize(ff_lj_params, self.param_mol)
 
         sig_params = lj_params[:, 0]
         eps_params = lj_params[:, 1]
@@ -369,23 +368,19 @@ class BaseTopology:
         return params, potentials.NonbondedPairListPrecomputed(inclusion_idxs, beta, cutoff)
 
     def parameterize_harmonic_bond(self, ff_params):
-        param_mol = self.mol if not self.mol_off else self.mol_off
-        params, idxs = self.ff.hb_handle.partial_parameterize(ff_params, param_mol)
+        params, idxs = self.ff.hb_handle.partial_parameterize(ff_params, self.param_mol)
         return params, potentials.HarmonicBond(idxs)
 
     def parameterize_harmonic_angle(self, ff_params):
-        param_mol = self.mol if not self.mol_off else self.mol_off
-        params, idxs = self.ff.ha_handle.partial_parameterize(ff_params, param_mol)
+        params, idxs = self.ff.ha_handle.partial_parameterize(ff_params, self.param_mol)
         return params, potentials.HarmonicAngle(idxs)
 
     def parameterize_proper_torsion(self, ff_params):
-        param_mol = self.mol if not self.mol_off else self.mol_off
-        params, idxs = self.ff.pt_handle.partial_parameterize(ff_params, param_mol)
+        params, idxs = self.ff.pt_handle.partial_parameterize(ff_params, self.param_mol)
         return params, potentials.PeriodicTorsion(idxs)
 
     def parameterize_improper_torsion(self, ff_params):
-        param_mol = self.mol if not self.mol_off else self.mol_off
-        params, idxs = self.ff.it_handle.partial_parameterize(ff_params, param_mol)
+        params, idxs = self.ff.it_handle.partial_parameterize(ff_params, self.param_mol)
         return params, potentials.PeriodicTorsion(idxs)
 
     def parameterize_periodic_torsion(self, proper_params, improper_params):
@@ -495,19 +490,23 @@ class DualTopology(BaseTopology):
 
         Parameter
         ---------
-        mol_a: ROMol
+        mol_a: ROMol or Molecule
             First ligand to be parameterized
 
-        mol_b: ROMol
+        mol_b: ROMol or Molecule
             Second ligand to be parameterized
 
         forcefield: ff.Forcefield
             A convenience wrapper for forcefield lists.
 
         """
-        self.mol_a = mol_a
-        self.mol_b = mol_b
+        self.mol_a = pass_mol_as_rdkit(mol_a)
+        self.mol_b = pass_mol_as_rdkit(mol_b)
         self.ff = forcefield
+        self.mol_a_off = mol_a if isinstance(mol_a, Molecule) else None
+        self.mol_b_off = mol_b if isinstance(mol_b, Molecule) else None
+        self.param_mol_a = self.mol_a if not self.mol_a_off else self.mol_a_off
+        self.param_mol_b = self.mol_b if not self.mol_b_off else self.mol_b_off
 
     def get_num_atoms(self):
         return self.mol_a.GetNumAtoms() + self.mol_b.GetNumAtoms()
@@ -537,15 +536,15 @@ class DualTopology(BaseTopology):
 
         # dummy is either "a or "b"
         if intramol_params:
-            q_params_a = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, self.mol_a)
-            q_params_b = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, self.mol_b)
-            lj_params_a = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, self.mol_a)
-            lj_params_b = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, self.mol_b)
+            q_params_a = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, self.param_mol_a)
+            q_params_b = self.ff.q_handle_intra.partial_parameterize(ff_q_params_intra, self.param_mol_b)
+            lj_params_a = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, self.param_mol_a)
+            lj_params_b = self.ff.lj_handle_intra.partial_parameterize(ff_lj_params_intra, self.param_mol_b)
         else:
-            q_params_a = self.ff.q_handle.partial_parameterize(ff_q_params, self.mol_a)
-            q_params_b = self.ff.q_handle.partial_parameterize(ff_q_params, self.mol_b)
-            lj_params_a = self.ff.lj_handle.partial_parameterize(ff_lj_params, self.mol_a)
-            lj_params_b = self.ff.lj_handle.partial_parameterize(ff_lj_params, self.mol_b)
+            q_params_a = self.ff.q_handle.partial_parameterize(ff_q_params, self.param_mol_a)
+            q_params_b = self.ff.q_handle.partial_parameterize(ff_q_params, self.param_mol_b)
+            lj_params_a = self.ff.lj_handle.partial_parameterize(ff_lj_params, self.param_mol_a)
+            lj_params_b = self.ff.lj_handle.partial_parameterize(ff_lj_params, self.param_mol_b)
 
         q_params = jnp.concatenate([q_params_a, q_params_b])
         lj_params = jnp.concatenate([lj_params_a, lj_params_b])
@@ -611,10 +610,10 @@ class DualTopology(BaseTopology):
         """
         NA = self.mol_a.GetNumAtoms()
 
-        params_a, pairlist_a = BaseTopology(self.mol_a, self.ff).parameterize_nonbonded_pairlist(
+        params_a, pairlist_a = BaseTopology(self.param_mol_a, self.ff).parameterize_nonbonded_pairlist(
             ff_q_params, ff_q_params_intra, ff_lj_params, ff_lj_params_intra, intramol_params=intramol_params
         )
-        params_b, pairlist_b = BaseTopology(self.mol_b, self.ff).parameterize_nonbonded_pairlist(
+        params_b, pairlist_b = BaseTopology(self.param_mol_b, self.ff).parameterize_nonbonded_pairlist(
             ff_q_params, ff_q_params_intra, ff_lj_params, ff_lj_params_intra, intramol_params=intramol_params
         )
 
@@ -632,8 +631,8 @@ class DualTopology(BaseTopology):
 
     def _parameterize_bonded_term(self, ff_params, bonded_handle, potential):
         offset = self.mol_a.GetNumAtoms()
-        params_a, idxs_a = bonded_handle.partial_parameterize(ff_params, self.mol_a)
-        params_b, idxs_b = bonded_handle.partial_parameterize(ff_params, self.mol_b)
+        params_a, idxs_a = bonded_handle.partial_parameterize(ff_params, self.param_mol_a)
+        params_b, idxs_b = bonded_handle.partial_parameterize(ff_params, self.param_mol_b)
         params_c = jnp.concatenate([params_a, params_b])
         idxs_c = np.concatenate([idxs_a, idxs_b + offset])
         return params_c, potential(idxs_c)
