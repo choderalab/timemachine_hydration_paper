@@ -1,16 +1,17 @@
 import warnings
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import jax
 import numpy as np
 import scipy.optimize
 from numpy.typing import NDArray
 from rdkit import Chem
+from openff.toolkit.topology import Molecule
 
 from timemachine.constants import BOLTZ, DEFAULT_TEMP, MAX_FORCE_NORM
 from timemachine.fe import model_utils, topology
 from timemachine.fe.free_energy import HostConfig
-from timemachine.fe.utils import get_mol_masses, get_romol_conf, set_romol_conf
+from timemachine.fe.utils import get_mol_masses, get_romol_conf, set_romol_conf, pass_mol_as_rdkit
 from timemachine.ff import Forcefield
 from timemachine.ff.handlers import openmm_deserializer
 from timemachine.lib import LangevinIntegrator, MonteCarloBarostat, custom_ops
@@ -116,7 +117,7 @@ def fire_minimize(x0: NDArray, u_impls: Sequence[custom_ops.BoundPotential], box
 
 
 def minimize_host_4d(
-    mols: List[Chem.Mol],
+    mols: List[Union[Chem.Mol, Molecule]],
     host_config: HostConfig,
     ff: Forcefield,
     mol_coords: Optional[List[NDArray]] = None,
@@ -173,14 +174,14 @@ def minimize_host_4d(
     conf_list = [np.array(host_config.conf)]
     for mol in mols:
         # mass increase is to keep the ligand fixed
-        mass_list.append(get_mol_masses(mol) * 100000)
+        mass_list.append(get_mol_masses(pass_mol_as_rdkit(mol)) * 100000)
 
     if mol_coords is not None:
         for mc in mol_coords:
             conf_list.append(mc)
     else:
         for mol in mols:
-            conf_list.append(get_romol_conf(mol))
+            conf_list.append(get_romol_conf(pass_mol_as_rdkit(mol)))
 
     combined_masses = np.concatenate(mass_list)
     combined_coords = np.concatenate(conf_list)
