@@ -176,7 +176,7 @@ def setup_initial_state(
 def setup_optimized_host(st: SingleTopology, config: HostConfig) -> Host:
     system, masses = convert_omm_system(config.omm_system)
     conf = minimizer.minimize_host_4d(
-        [st.mol_a, st.mol_b],
+        [st.param_mol_a, st.param_mol_b],
         config,
         st.ff,
     )
