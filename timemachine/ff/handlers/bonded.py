@@ -53,10 +53,12 @@ def generate_off_idxs_params(collection):
             params.append((k, angle))
         elif (isinstance(collection, off_valence.SMIRNOFFProperTorsionCollection) or
               isinstance(collection, off_valence.SMIRNOFFImproperTorsionCollection)):
-            k, phase, period = (value(to_openmm(potential.parameters['k'])),
-                                value(to_openmm(potential.parameters['phase'])),
-                                value(to_openmm(potential.parameters['periodicity'])))
-            params.append((k, phase, period))
+            k, phase, period, idivf = (value(to_openmm(potential.parameters['k'])),
+                                       value(to_openmm(potential.parameters['phase'])),
+                                       value(to_openmm(potential.parameters['periodicity'])),
+                                       value(to_openmm(potential.parameters['idivf']))
+                                      )
+            params.append((k / idivf, phase, period))
         else:
             raise NotImplementedError(f"collection {collection.__class__.__name__} is not implemented.")
 
