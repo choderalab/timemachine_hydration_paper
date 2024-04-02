@@ -486,7 +486,6 @@ def estimate_relative_free_energy_bisection(
     n_windows: Optional[int] = None,
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = 0.7,
-    **kwargs,
 ) -> SimulationResult:
     r"""Estimate relative free energy between mol_a and mol_b via independent simulations with a dynamic lambda schedule
     determined by successively bisecting the lambda interval between the pair of states with the greatest BAR
@@ -605,7 +604,6 @@ def estimate_relative_free_energy_bisection_hrex_impl(
     make_optimized_initial_state_fn: Callable[[float], InitialState],
     combined_prefix: str,
     min_overlap: Optional[float] = None,
-    **kwargs,
 ) -> SimulationResult:
     if n_windows is None:
         n_windows = DEFAULT_NUM_WINDOWS
@@ -671,7 +669,6 @@ def estimate_relative_free_energy_bisection_hrex_impl(
             initial_states_hrex,
             replace(md_params, n_eq_steps=0),  # using pre-equilibrated samples
             n_frames_per_iter=md_params.hrex_params.n_frames_per_iter,
-            **kwargs,
         )
 
         plots = make_pair_bar_plots(pair_bar_result, temperature, combined_prefix)
@@ -710,7 +707,6 @@ def estimate_relative_free_energy_bisection_hrex(
     n_windows: Optional[int] = None,
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = 0.7,
-    **kwargs,
 ) -> SimulationResult:
     """
     Estimate relative free energy between mol_a and mol_b using Hamiltonian Replica EXchange (HREX) sampling of a
@@ -799,7 +795,6 @@ def estimate_relative_free_energy_bisection_hrex(
         make_optimized_initial_state_fn,
         combined_prefix,
         min_overlap,
-        **kwargs,
     )
 
 
@@ -842,7 +837,6 @@ def run_solvent(
     n_windows: Optional[int] = None,
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = 0.7,
-    **kwargs,
 ):
     box_width = 4.0
     solvent_sys, solvent_conf, solvent_box, solvent_top = builders.build_water_system(box_width, forcefield.water_ff)
@@ -859,7 +853,6 @@ def run_solvent(
         n_windows=n_windows,
         min_overlap=min_overlap,
         min_cutoff=min_cutoff,
-        **kwargs,
     )
     return solvent_res, solvent_top, solvent_host_config
 
@@ -874,7 +867,6 @@ def run_complex(
     n_windows: Optional[int] = None,
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = 0.7,
-    **kwargs,
 ):
     complex_sys, complex_conf, complex_box, complex_top, nwa = builders.build_protein_system(
         protein, forcefield.protein_ff, forcefield.water_ff
@@ -892,7 +884,6 @@ def run_complex(
         n_windows=n_windows,
         min_overlap=min_overlap,
         min_cutoff=min_cutoff,
-        **kwargs,
     )
     return complex_res, complex_top, complex_host_config
 
@@ -919,7 +910,6 @@ def run_edge_and_save_results(
     file_client: AbstractFileClient,
     n_windows: Optional[int],
     md_params: MDParams = DEFAULT_MD_PARAMS,
-    **kwargs,
 ):
     # Ensure that all mol props (e.g. _Name) are included in pickles
     # Without this get_mol_name(mol) will fail on roundtripped mol
@@ -944,7 +934,6 @@ def run_edge_and_save_results(
             protein,
             md_params,
             n_windows=n_windows,
-            **kwargs
         )
         solvent_res, solvent_top, _ = run_solvent(
             mol_a,
@@ -954,7 +943,6 @@ def run_edge_and_save_results(
             protein,
             md_params,
             n_windows=n_windows,
-            **kwargs
         )
 
     except Exception as err:
@@ -983,7 +971,7 @@ def run_edge_and_save_results(
         return file_client.full_path(path)
 
     path = get_success_result_path(edge.mol_a_name, edge.mol_b_name)
-    pkl_obj = (pass_mol_as_rdkit(mol_a), pass_mol_as_rdkit(mol_b), edge.metadata, core, solvent_res, solvent_top, complex_res, complex_top)
+    pkl_obj = (mol_a, mol_b, edge.metadata, core, solvent_res, solvent_top, complex_res, complex_top)
     file_client.store(path, pickle.dumps(pkl_obj))
 
     solvent_ddg = sum(solvent_res.final_result.dGs)
