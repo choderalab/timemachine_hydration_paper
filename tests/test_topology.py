@@ -8,12 +8,50 @@ import pytest
 from common import check_split_ixns
 from rdkit import Chem
 from rdkit.Chem import AllChem
+from openff.toolkit import ForceField
+from openff.toolkit.topology import Molecule
 
 from timemachine import potentials
 from timemachine.fe import topology
 from timemachine.fe.topology import BaseTopology, DualTopology, DualTopologyMinimization
 from timemachine.fe.utils import get_mol_name, get_romol_conf, read_sdf, set_romol_conf
 from timemachine.ff import Forcefield
+
+
+def validate_rdkit_off_BaseTopology_energy(mol):
+    """build a `BaseTopology` for a mol using a standard rdkit route (with precomputed default FF)
+    and the openff route (with precomputed off FF); assert the energies of the given mol conf is the same.
+    NOTE: this test should also be done for `DualTopology` and `DualTopologyMinimization`, strictly speaking, 
+    but all of the relevant methods are inherited."""
+    
+    off_mol = Molecule.from_rdkit(mol)
+    off_mol.assign_partial_charges('am1bcc') # i think?
+    mol = off_mol.to_rdkit() # overwrite mol
+    off_ff = ForceField("openff_unconstrained-2.0.0.offxml")
+    
+    # handle off parameterization route
+    off_tm_ff = Forcefield.load_precomputed_off_default() # same as `off_unconst-2.0.0`
+    off_bt = topology.BaseTopology(off_mol, off_tm_ff)
+    off_tm_sys = off_bt.setup_end_state()
+    off_bp = off_tm_sys.get_U_fn()
+    off_val = off_bp(get_romol_conf(mol))
+    
+    # handle rdkit parameterization route
+    rdkit_tm_ff = Forcefield.load_precomputed_default()
+    rdkit_bt = topology.BaseTopology(mol, rdkit_tm_ff)
+    rdkit_tm_sys = rdkit_bt.setup_end_state()
+    tm_bp = rdkit_tm_sys.get_U_fn()
+    tm_val = tm_bp(get_romol_conf(mol))
+    
+    assert np.isclose(off_val, tm_val), f"the off routine energy {off_val} != rdkit routine energy {tm_val}"
+
+def test_rdkit_and_off_BaseTopology_energy():
+    """run `validate_rdkit_off_BaseTopology_energy` for the first 3 mols in `ligands_40`"""
+    with resources.path("timemachine.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+        all_mols = read_sdf(path_to_ligand)
+
+    for mol in all_mols[:3]:
+        validate_rdkit_off_BaseTopology_energy(mol)
 
 
 def test_dual_topology_nonbonded_pairlist():
