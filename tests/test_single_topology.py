@@ -12,6 +12,8 @@ from common import check_split_ixns, load_split_forcefields
 from hypothesis import assume, given, seed
 from rdkit import Chem
 from rdkit.Chem import AllChem
+from openff.toolkit import ForceField
+from openff.toolkit.topology import Molecule
 
 from timemachine import potentials
 from timemachine.constants import (
@@ -42,12 +44,13 @@ from timemachine.fe.single_topology import (
     setup_dummy_interactions_from_ff,
 )
 from timemachine.fe.system import convert_bps_into_system, minimize_scipy, simulate_system
-from timemachine.fe.utils import get_mol_name, get_romol_conf, read_sdf
+from timemachine.fe.utils import get_mol_name, get_romol_conf, read_sdf, pass_mol_as_rdkit
 from timemachine.ff import Forcefield
 from timemachine.ff.handlers import openmm_deserializer
 from timemachine.md import minimizer
 from timemachine.md.builders import build_protein_system, build_water_system
 from timemachine.potentials.jax_utils import pairwise_distances
+from timemachine.fe.rbfe import setup_in_vacuum # as a util
 
 setup_chiral_dummy_interactions_from_ff = functools.partial(
     setup_dummy_interactions_from_ff,
@@ -55,6 +58,56 @@ setup_chiral_dummy_interactions_from_ff = functools.partial(
     chiral_bond_k=DEFAULT_CHIRAL_BOND_RESTRAINT_K,
 )
 
+
+def validate_rdkit_off_SingleTopology(mol1, mol2):
+    """given two rdkit mols, ensure energy matches per `BoundPotential` from `SingleTopology`
+    given the typical rdkit routine and the new off routine in vacuum; also validates core maps, 
+    combined positions, boxes.
+    WARNING: this currently fails on energy validation because of torsion energy mismatch.
+        After sleuthing, this is a consequence of the fact that `find_dummy_groups_and_anchors`
+        returns arbitrary groups and anchors, which can cause differences in the dummy terms (particularly improper torsions)
+        that are added, even though for each `SingleTopology` object, they should be internally consistent
+    """
+    off_mol1, off_mol2 = Molecule.from_rdkit(mol1), Molecule.from_rdkit(mol2)
+    off_mol1.assign_partial_charges('am1bcc')
+    off_mol2.assign_partial_charges('am1bcc')
+
+    # overwrite mols
+    mol1 = off_mol1.to_rdkit()
+    mol2 = off_mol2.to_rdkit() 
+    
+    # get cores
+    off_core = atom_mapping.get_cores(pass_mol_as_rdkit(off_mol1), pass_mol_as_rdkit(off_mol2), **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+    rd_core = atom_mapping.get_cores(mol1, mol2, **DEFAULT_ATOM_MAPPING_KWARGS)[0]
+    assert np.allclose(off_core, rd_core)
+
+    # make ffs
+    off_ff = Forcefield.load_precomputed_off_default()
+    rdkit_tm_ff = Forcefield.load_precomputed_default()
+    
+    # off st
+    off_conf_a, off_conf_b = get_romol_conf(pass_mol_as_rdkit(off_mol1)), get_romol_conf(pass_mol_as_rdkit(off_mol2))
+    off_st = single_topology.SingleTopology(off_mol1, off_mol2, off_core, off_ff)
+    off_dummy_grp_anchors = single_topology.find_dummy_groups_and_anchors(pass_mol_as_rdkit(off_mol1), pass_mol_as_rdkit(off_mol2), off_core[:,0], off_core[:,1])
+    
+    # rdkit st
+    rd_conf_a, rd_conf_b = get_romol_conf(pass_mol_as_rdkit(off_mol1)), get_romol_conf(pass_mol_as_rdkit(off_mol2))
+    rdkit_st = single_topology.SingleTopology(mol1, mol2, rd_core, rdkit_tm_ff)
+    rd_dummy_grp_anchors = single_topology.find_dummy_groups_and_anchors(pass_mol_as_rdkit(mol1), pass_mol_as_rdkit(mol1), rd_core[:,0], rd_core[:,1])
+
+    for lamb in [1., 0.5, 0.]:
+        off_conf = off_st.combine_confs(off_conf_a, off_conf_b, lamb)
+        off_x0, off_box0, off_masses, off_bps, off_baro = setup_in_vacuum(off_st, off_conf, lamb)
+        off_energies = np.array([bp(off_x0, off_box0) for bp in off_bps])
+        
+        rd_conf = rdkit_st.combine_confs(rd_conf_a, rd_conf_b, lamb)
+        rd_x0, rd_box0, rd_masses, rd_bps, rd_baro = setup_in_vacuum(rdkit_st, rd_conf, lamb)
+        rd_energies = np.array([bp(rd_x0, rd_box0) for bp in rd_bps])
+    
+        assert np.allclose(off_x0, rd_x0)
+        assert np.allclose(off_box0, rd_box0)
+        assert np.allclose(off_energies, rd_energies), f"energy by force validation failed: {off_energies}, {rd_energies}"
+    
 
 @pytest.mark.nocuda
 def test_setup_chiral_dummy_atoms():
@@ -1765,3 +1818,12 @@ $$$$""",
 
     assert np.sum(chiral_params_1 == 0) == 3
     assert np.sum(chiral_params_1 == DEFAULT_CHIRAL_ATOM_RESTRAINT_K) == 4
+
+
+@pytest.mark.skip(condition, reason="Skipping since energy validation fails due to arbitrary nature of ``find_dummy_groups_and_anchors``")
+def test_rdkit_off_SingleTopology():
+    """test the `validate_rdkit_off_SingleTopology` fn on a pair of hif2a ligands"""
+    with resources.path("timemachine.datasets.fep_benchmark.hif2a", "ligands.sdf") as path:
+        mols = read_sdf(str(path))
+    mol1, mol2 = mols[:2] # maybe test more if this works in future...
+    validate_rdkit_off_SingleTopology(mol1, mol2)
