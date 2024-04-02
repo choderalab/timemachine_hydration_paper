@@ -811,7 +811,7 @@ def run_sims_hrex(
     n_frames_per_iter: int,
     n_swap_attempts_per_iter: Optional[int] = None,
     print_diagnostics_interval: Optional[int] = 10,
-    save_only_endstate_trajs: bool=True,
+    save_hrex_trajs: bool=True,
     **unused_kwargs,
 ) -> Tuple[PairBarResult, List[Trajectory], HREXDiagnostics]:
     r"""Sample from a sequence of states using nearest-neighbor Hamiltonian Replica EXchange (HREX).
@@ -836,9 +836,8 @@ def run_sims_hrex(
     print_diagnostics_interval: int or None, optional
         If not None, print diagnostics every N iterations
 
-    save_only_endstate_trajs: bool, default `True`
-        If `True`, only save the first and last trajectories; this is meant to cut
-        down on memory requirements for writing.
+    save_hrex_trajs: bool, default `True`
+        If `False`, will return `trajectories_by_state` as empty trajs
 
     Returns
     -------
@@ -1072,6 +1071,8 @@ def run_sims_hrex(
         for samples, initial_state in zip(samples_by_state, initial_states)
     ]
 
+    # it's odd to have to save all of the `samples_by_state` to memory just to get bar results at end;
+    # it makes more sense to update the energy matrices OTF, right?
     bar_results = list(
         pairwise_transform_and_combine(
             results_by_state,
@@ -1082,5 +1083,5 @@ def run_sims_hrex(
 
     diagnostics = HREXDiagnostics(replica_idx_by_state_by_iter, fraction_accepted_by_pair_by_iter)
 
-    out_trajs = [samples_by_state[0], samples_by_state[-1]] if save_only_endstate_trajs else samples_by_state
+    out_trajs = samples_by_state if save_hrex_trajs else [Trajectory.empty() for _ in initial_states] # remove the `samples_by_state`
     return PairBarResult(list(initial_states), bar_results), out_trajs, diagnostics
