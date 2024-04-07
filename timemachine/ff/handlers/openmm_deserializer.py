@@ -2,9 +2,7 @@ from collections import defaultdict
 from typing import DefaultDict, List, Tuple, Iterable
 
 import numpy as np
-import jax
-from jax import numpy as jnp
-import openmm as mm
+import openmm as omm
 from openmm import unit
 
 from timemachine import constants, potentials
@@ -14,14 +12,6 @@ ORDERED_FORCES = ["HarmonicBond", "HarmonicAngle", "PeriodicTorsion", "Nonbonded
 
 def value(quantity):
     return quantity.value_in_unit_system(unit.md_unit_system)
-
-def is_proper_from_bond_idxs(torsion_idxs: np.ndarray, sorted_bond_idxs: np.ndarray, **unused_kwargs) -> bool:
-    singular_match_fn = lambda query_bond, bond_template: jnp.array_equal(query_bond, bond_template)
-    any_match_fn = lambda query_bond, bond_template_arr: jnp.any(jax.vmap(singular_match_fn, in_axes=(None,0))(query_bond, bond_template_arr))
-    all_match_fn = lambda all_query_bonds, bond_template_arr: jnp.all(jax.vmap(any_match_fn, in_axes=(0,None))(all_query_bonds, bond_template_arr))
-    return all_match_fn(torsion_idxs, sorted_bond_idxs)
-    
-
 
 def deserialize_nonbonded_force(force, N):
     num_atoms = force.getNumParticles()
@@ -124,21 +114,24 @@ def deserialize_nonbonded_force(force, N):
 
     return nb_params, exclusion_idxs, beta, scale_factors
 
-def idxs_params_from_hb(forces: Iterable[mm.HarmonicBondforce], 
+def idxs_params_from_hb(forces: Iterable[omm.HarmonicBondforce], 
                         **unused_kwargs) -> Tuple[np.ndarray, np.ndarray]:
-    bond_idxs, bond_params = []
+    bond_idxs, bond_params = [], []
     for force in forces:
         for b_idx in range(force.getNumBonds()):
             src_idx, dst_idx, length, k = force.getBondParameters(b_idx)
             length = value(length)
             k = value(k)
-    
             bond_idxs.append(np.array([src_idx, dst_idx], dtype=np.int32))
             bond_params.append(np.array([k, length], dtype=np.float64))
+    
+    if len(bond_idxs) == 0:
+        bond_idxs = np.zeros((0, 2), dtype=np.int32)
+        bond_params = np.zeros((0, 2), dtype=np.float64)
 
-    return np.sort(np.concatenate(bond_idxs, dtype=np.int32), axis=-1), np.concatenate(bond_params, dtype=np.float64)
+    return np.array(bond_idxs, dtype=np.int32), np.array(bond_params, dtype=np.float64)
 
-def idxs_params_from_ha(forces: Iterable[mm.HarmonicAngleForce],
+def idxs_params_from_ha(forces: Iterable[omm.HarmonicAngleForce],
                        **unused_kwargs) -> Tuple[np.ndarray, np.ndarray]:
     angle_idxs, angle_params = [], []
     for force in forces:
@@ -146,43 +139,46 @@ def idxs_params_from_ha(forces: Iterable[mm.HarmonicAngleForce],
             src_idx, mid_idx, dst_idx, angle, k = force.getAngleParameters(a_idx)
             angle = value(angle)
             k = value(k)
-
             angle_idxs.append(np.array([src_idx, mid_idx, dst_idx], dtype=np.int32))
             angle_params.append(np.array([k, angle], dtype=np.float64))
+    
+    if len(angle_idxs) == 0:
+        angle_idxs = np.zeros((0, 3), dtype=np.int32)
+        angle_params = np.zeros((0, 2), dtype=np.float64)
 
-    return np.concatenate(angle_idxs, dtype=np.int32), np.concatenate(angle_params, dtype=np.float64)
+    return np.array(angle_idxs, dtype=np.int32), np.array(angle_params, dtype=np.float64)
 
-def idxs_params_from_t(forces: Iterable[mm.PeriodicTorsionForce],
-                       proper: bool=True,
-                       sorted_bond_idxs: np.ndarray,
-                      **unused_kwargs) -> Tuple[np.ndarray, np.ndarray]:
+def idxs_params_from_t(
+        forces: Iterable[omm.PeriodicTorsionForce],
+        **unused_kwargs) -> Tuple[np.ndarray, np.ndarray]:
     """return the proper(improper) torsion indices and parameters"""
-    torsions_idxs, torsions_params = [], []
+    torsion_idxs, torsion_params = [], []
     for force in forces:
         for t_idx in range(force.getNumTorsions()):
             a_idx, b_idx, c_idx, d_idx, period, phase, k = force.getTorsionParameters(t_idx)
-    
             phase = value(phase)
             k = value(k)
-
             torsion_idxs_ = np.array([a_idx, b_idx, c_idx, d_idx], dtype=np.int32)
             torsion_idxs_ = torsion_idxs_ if a_idx < d_idx else torsion_idxs_[::-1]
-            is_proper = is_proper_from_bond_idxs(torsion_idxs_, sorted_bond_idxs)
             torsion_params_ = np.array([k, phase, period], dtype=np.float64)
-            if (is_proper and proper) or ((not is_proper) and (not proper)):
-                torsions_idxs.append(torsion_idxs_)
-                torsions_params.append(torsion_params_)
+            torsion_idxs.append(torsion_idxs_)
+            torsion_params.append(torsion_params_)
+    
+    if len(torsion_idxs) == 0:
+        torsion_idxs = np.zeros((0, 4), dtype=np.int32)
+        torsion_params = np.zeros((0, 3), dtype=np.float64)
                 
-    return np.concatenate(torsions_idxs, dtype=np.int32), np.concatenate(torsions_params, dtype=np.float64)
+    return np.array(torsion_idxs, dtype=np.int32), np.array(torsion_params, dtype=np.float64)
                           
 
-def deserialize_system(system: mm.System, cutoff: float) -> Tuple[List[potentials.BoundPotential], List[float]]:
+def deserialize_system(
+        system: omm.System, cutoff: float) -> Tuple[List[potentials.BoundPotential], List[float]]:
     """
     Deserialize an OpenMM XML file
 
     Parameters
     ----------
-    system: mm.System
+    system: omm.System
         A system object to be deserialized
     cutoff: float
         Nonbonded cutoff, in nm
@@ -217,14 +213,11 @@ def deserialize_system(system: mm.System, cutoff: float) -> Tuple[List[potential
     bps_dict["HarmonicAngle"].append(potentials.HarmonicAngle(angle_idxs).bind(angle_params))
 
     torsion_forces = [f for f in system.getForces() if f.__class__.__name__ == 'PeriodicTorsionForce']
-    proper_torsion_idxs, proper_torsion_params = idxs_params_from_t(torsion_forces, True, bond_idxs)
-    improper_torsion_idxs, improper_torsion_params = idxs_params_from_t(torsion_forces, True, bond_idxs)
-    torsion_idxs = np.vstack([proper_torsion_idxs, improper_torsion_idxs], dtype=np.int32)
-    torsion_params = np.vstack([proper_torsion_params, improper_torsion_params], dtype=np.float64)
+    torsion_idxs, torsion_params = idxs_params_from_t(torsion_forces)
     bps_dict["PeriodicTorsion"].append(potentials.PeriodicTorsion(torsion_idxs).bind(torsion_params))
 
     for force in system.getForces():
-        if isinstance(force, mm.NonbondedForce):
+        if isinstance(force, omm.NonbondedForce):
             nb_params, exclusion_idxs, beta, scale_factors = deserialize_nonbonded_force(force, N)
             bps_dict["Nonbonded"].append(
                 potentials.Nonbonded(N, exclusion_idxs, scale_factors, beta, cutoff).bind(nb_params)

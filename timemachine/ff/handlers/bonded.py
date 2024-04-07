@@ -1,11 +1,38 @@
 import numpy as np
+import openmm as omm
 
 from timemachine.ff.handlers.serialize import SerializableMixIn
 from timemachine.ff.handlers.suffix import _SUFFIX
 from timemachine.ff.handlers.utils import canonicalize_bond, match_smirks
-from timemachine.ff.handlers import openmm_deserializer
-import openmm as mm
+from timemachine.ff.handlers.openmm_deserializer import (
+    idxs_params_from_hb,
+    idxs_params_from_ha,
+    idxs_params_from_t,
+    )
 
+def prune_torsions(torsion_idxs, match_torsion_idxs):
+    """return indices of arg0 for which there are any matches in arg1"""
+    out_indices = []
+    for _idx, torsion_idx in enumerate(torsion_idxs):
+        matches = np.array(
+            [np.any([np.all(torsion_idx == pt_idx), 
+                     np.all(torsion_idx[::-1] == pt_idx)]) for pt_idx in match_torsion_idxs])
+        any_matches = np.any(matches)
+        if any_matches: out_indices.append(_idx)
+    return np.array(out_indices, dtype=np.int32)  
+
+def handle_omm_torsions(mol, template_pt_idxs, proper = True):
+    ptfs = [f for f in mol.openmm_system.getForces() if isinstance(f, omm.PeriodicTorsionForce)]
+    omm_torsion_idxs, omm_assigned_params = idxs_params_from_t(ptfs)
+    _proper_idxs = prune_torsions(omm_torsion_idxs, template_pt_idxs)
+    _improper_idxs = np.array(
+        [idx for idx in range(len(omm_torsion_idxs)) if idx not in _proper_idxs],
+        dtype=np.int32
+    )
+    choice_idxs = _proper_idxs if proper else _improper_idxs
+    idxs = omm_torsion_idxs[choice_idxs,:]
+    assigned_params = omm_assigned_params[choice_idxs,:]
+    return assigned_params, idxs
 
 def generate_vd_idxs(mol, smirks):
     """
@@ -32,7 +59,7 @@ def generate_vd_idxs(mol, smirks):
 class ReversibleBondHandler(SerializableMixIn):
     def __init__(self, smirks, params, props):
         """ "Reversible" here means that bond energy is symmetric to index reversal
-        u_bond(x[i], x[j]) = u_bond(x[j], x[i]);"""
+        u_bond(x[i], x[j]) = u_bond(x[j], x[i])"""
         self.smirks = smirks
         self.params = np.array(params, dtype=np.float64)
         self.props = props
@@ -65,39 +92,20 @@ class ReversibleBondHandler(SerializableMixIn):
             System bond idxes, parameters, and the vjp_fn.
 
         """
+
         bond_idxs, param_idxs = generate_vd_idxs(mol, smirks)
         return params[param_idxs], bond_idxs
-
-
-class MMSystemReversibleBondHandler:
-    def __init__(self, *unused_args, **unused_kwargs):
-        self.smirks = None
-        self.params = None
-        self.props = None
-
-    def lookup_smirks(self, _):
-        # probably don't need this
-        return None
-
-    def partial_parameterize(self, _, mm_system):
-        return self.static_parameterize(None, None, mm_system)
-
-    def parameterize(self, mm_system):
-        return self.static_parameterize(None, None, mm_system)
-
-    def serialize(self):
-        raise NotImplementedError(f"Handler from an mm System has nothing to serialize.")
-
-    @staticmethod
-    def static_parameterize(_, _, mm_system):
-        raise NotImplementedError(f"Base `static_parameterize` isn't implemented. Use a subclass thereof")
 
 
 # we need to subclass to get the names backout
 class HarmonicBondHandler(ReversibleBondHandler):
     @staticmethod
     def static_parameterize(params, smirks, mol):
-        mol_params, bond_idxs = super(HarmonicBondHandler, HarmonicBondHandler).static_parameterize(params, smirks, mol)
+        if hasattr(mol, 'openmm_system'):
+            hbfs = [f for f in mol.openmm_system.getForces() if isinstance(f, omm.HarmonicBondForce)]
+            bond_idxs, mol_params = idxs_params_from_hb(hbfs)
+        else:
+            mol_params, bond_idxs = super(HarmonicBondHandler, HarmonicBondHandler).static_parameterize(params, smirks, mol)
 
         # validate expected set of bonds
         rd_bonds = set()
@@ -122,36 +130,18 @@ class HarmonicBondHandler(ReversibleBondHandler):
         return mol_params, bond_idxs
 
 
-class MMSystemHarmonicBondHandler(MMSystemReversibleBondHandler):
-    @staticmethod
-    def static_parameterize(_, _, mm_system):
-        forces = [f for f in mm_system.getForces() if isinstance(f, mm.HarmonicBondForce)]
-        bond_idxs, mol_params = openmm_deserializer.idxs_params_from_hb(forces) 
-        if len(mol_params) == 0:
-            mol_params = np.zeros((0,2), dtype=np.float64)
-            bond_idxs = np.zeros((0, 2), dtype=np.int32)
-        return mol_params, bond_idxs
-
-
 class HarmonicAngleHandler(ReversibleBondHandler):
     @staticmethod
     def static_parameterize(params, smirks, mol):
-        mol_params, angle_idxs = super(HarmonicAngleHandler, HarmonicAngleHandler).static_parameterize(
-            params, smirks, mol
-        )
+        if hasattr(mol, 'openmm_system'):
+            hafs = [f for f in mol.openmm_system.getForces() if isinstance(f, omm.HarmonicAngleForce)]
+            angle_idxs, mol_params = idxs_params_from_ha(hafs)
+        else:
+            mol_params, angle_idxs = super(HarmonicAngleHandler, HarmonicAngleHandler).static_parameterize(
+                params, smirks, mol
+            )
         if len(mol_params) == 0:
             mol_params = params[:0]  # empty slice with same dtype, other dimensions
-            angle_idxs = np.zeros((0, 3), dtype=np.int32)
-        return mol_params, angle_idxs
-
-
-class MMSystemHarmonicAngleHandler(MMSystemReversibleBondHandler):
-    @staticmethod
-    def static_parameterize(_, _, mm_system):
-        forces = [f for f in mm_system.getForces() if isinstance(f, mm.HarmonicAngleForce)]
-        angle_idxs, mol_params = openmm_deserializer.idxs_params_from_ha(forces) 
-        if len(mol_params) == 0:
-            mol_params = np.zeros((0,2), dtype=np.float64)
             angle_idxs = np.zeros((0, 3), dtype=np.int32)
         return mol_params, angle_idxs
         
@@ -193,9 +183,11 @@ class ProperTorsionHandler:
 
     @staticmethod
     def static_parameterize(params, smirks, counts, mol):
-        torsion_idxs, param_idxs = generate_vd_idxs(mol, smirks)
-
+        torsion_idxs, param_idxs = generate_vd_idxs(mol, smirks) # generate these first anyway to query if omm
         assert len(torsion_idxs) == len(param_idxs)
+        if hasattr(mol, 'openmm_system'):
+            proper_idxs, assigned_params = handle_omm_torsions(mol, torsion_idxs, proper = True)
+            return assigned_params, proper_idxs
 
         scatter_idxs = []
         repeats = []
@@ -244,39 +236,6 @@ class ProperTorsionHandler:
 
         return result
 
-class MMSystemProperTorsionHandler(MMSystemReversibleBondHandler):
-    def __init__(self, *unused_args, **unused_kwargs):
-        super().__init__()
-        self.counts = None
-
-    def parameterize(self, mm_system):
-        return self.static_parameterize(self.params, self.smirks, self.counts, mm_system)
-
-    def partial_parameterize(self, _, mm_system):
-        return self.static_parameterize(_, _, _, mm_system)
-
-    @staticmethod
-    def static_parameterize(_, _, _, mm_system):
-        return self._static_parameterize(mm_system, True)
-
-    @staticmethod
-    def _static_parameterize(mm_system, proper):
-        bond_forces = [f for f in mm_system.getForces() if isinstance(f, mm.HarmonicBondForce)]
-        sorted_bond_idxs, _ = openmm_deserializer.idxs_params_from_hb(bond_forces)
-        torsion_forces = [f for f in mm_system.getForces() if isinstance(f, mm.PeriodicTorsionForce)]
-        torsion_idxs, params = openmm_deserializer.idx_params_from_t(torsion_forces, proper, sorted_bond_idxs)
-
-        if len(params) == 0:
-            params = np.zeros((0,3), dtype=np.float64)
-            torsion_idxs = np.zeros((0,4), dtype=np.int32)
-        return params, torsion_idxs
-
-
-class MMSystemImproperTorsionHandler(MMSystemReversibleBondHandler):
-    @staticmethod
-    def static_parameterize(_, _, _, mm_system):
-        return self._static_parameterize(mm_system, False)
-    
 
 class ImproperTorsionHandler(SerializableMixIn):
     def __init__(self, smirks, params, props):
@@ -294,6 +253,13 @@ class ImproperTorsionHandler(SerializableMixIn):
 
     @staticmethod
     def static_parameterize(params, smirks, mol):
+        # first query omm system:
+        if hasattr(mol, 'openmm_system'):
+            torsion_idxs, param_idxs = generate_vd_idxs(mol, smirks) # query propers
+            assert len(torsion_idxs) == len(param_idxs)
+            improper_idxs, assigned_params = handle_omm_torsions(mol, torsion_idxs, proper = False)
+            return assigned_params, improper_idxs
+        
         # improper torsions do not use a valence dict as
         # we cannot sort based on b_idxs[0] and b_idxs[-1]
         # and reverse if needed. Impropers are centered around
