@@ -48,37 +48,16 @@ class Forcefield:
     Utility class for wrapping around a list of ff_handlers
     """
 
-    hb_handle: Optional[
-        Union[
-            bonded.HarmonicBondHandler,
-            bonded.MMSystemHarmonicBondHandler,
-            ]
-    ]
-    ha_handle: Optional[
-        Union[
-            bonded.HarmonicAngleHandler,
-            bonded.MMSystemHarmonicAngleHandler,
-            ]
-    ]
-    pt_handle: Optional[
-        Union[
-            bonded.ProperTorsionHandler,
-            bonded.MMSystemProperTorsionHandler,
-            ]
-    ]
-    it_handle: Optional[
-        Union[
-            bonded.ImproperTorsionHandler,
-            bonded.MMSystemImproperTorsionHandler,
-            ]
-    ]
+    hb_handle: Optional[bonded.HarmonicBondHandler]
+    ha_handle: Optional[bonded.HarmonicAngleHandler]
+    pt_handle: Optional[bonded.ProperTorsionHandler]
+    it_handle: Optional[bonded.ImproperTorsionHandler]
     q_handle: Optional[
         Union[
             nonbonded.SimpleChargeHandler,
             nonbonded.AM1BCCHandler,
             nonbonded.AM1CCCHandler,
             nonbonded.PrecomputedChargeHandler,
-            nonbonded.MMSystemChargeHandler,
         ]
     ]
     q_handle_intra: Optional[
@@ -87,7 +66,6 @@ class Forcefield:
             nonbonded.AM1BCCIntraHandler,
             nonbonded.AM1CCCIntraHandler,
             nonbonded.PrecomputedChargeHandler,
-            nonbonded.MMSystemChargeHandler,
         ]
     ]
     q_handle_solv: Optional[
@@ -96,27 +74,11 @@ class Forcefield:
             nonbonded.AM1BCCSolventHandler,
             nonbonded.AM1CCCSolventHandler,
             nonbonded.PrecomputedChargeHandler,
-            nonbonded.MMSystemChargeHandler,
         ]
     ]
-    lj_handle: Optional[
-        Union[
-            nonbonded.LennardJonesHandler,
-            nonbonded.MMSystemLJHandler,
-        ]
-    ]
-    lj_handle_intra: Optional[
-        Union[
-            nonbonded.LennardJonesIntraHandler,
-            nonbonded.MMSystemLJHandler,
-        ]
-    ]
-    lj_handle_solv: Optional[
-        Union[
-            nonbonded.LennardJonesSolventHandler,
-            nonbonded.MMSystemLJHandler,
-        ]
-    ]
+    lj_handle: Optional[nonbonded.LennardJonesHandler]
+    lj_handle_intra: Optional[nonbonded.LennardJonesIntraHandler]
+    lj_handle_solv: Optional[nonbonded.LennardJonesSolventHandler]
 
     protein_ff: Union[str, Iterable[str]]
     water_ff: str
@@ -164,32 +126,6 @@ class Forcefield:
     def load_default(cls) -> "Forcefield":
         """alias for load_from_file(DEFAULT_FF)"""
         return cls.load_from_file(DEFAULT_FF)
-
-    @classmethod
-    def load_mm_system(cls, mm_system) -> "Forcefield":
-        """load a forcefield object from an `mm.System` object"""
-        ff = cls.load_default()
-        q_handle = MMSystemChargeHandler()
-        q_handle_intra = MMSystemChargeHandler()
-        q_handle_solv = MMSystemChargeHandler()
-
-        lj_handle = MMSystemLJHandler()
-        lj_handle_intra = MMSystemLJHandler()
-        lj_handle_solv = MMSystemLJHandler()
-        return Forcefield(
-            hb_handle=bonded.MMSystemHarmonicBondHandler(),
-            ha_handle=bonded.MMSystemHarmonicAngleHandler(),
-            pt_handle=bonded.MMSystemProperTorsionHandler(),
-            it_handle=bonded.MMSystemImproperTorsionHandler(),
-            q_handle=q_handle,
-            q_handle_solv=q_handle_solv,
-            q_handle_intra=q_handle_intra,
-            lj_handle=lj_handle,
-            lj_handle_solv=lj_handle_solv,
-            lj_handle_intra=lj_handle_intra,
-            protein_ff=ff.protein_ff,
-            water_ff=ff.water_ff,
-        )
  
 
     @classmethod
