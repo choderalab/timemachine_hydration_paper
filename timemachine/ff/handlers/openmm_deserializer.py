@@ -114,7 +114,7 @@ def deserialize_nonbonded_force(force, N):
 
     return nb_params, exclusion_idxs, beta, scale_factors
 
-def idxs_params_from_hb(forces: Iterable[omm.HarmonicBondforce], 
+def idxs_params_from_hb(forces: Iterable[omm.HarmonicBondForce], 
                         **unused_kwargs) -> Tuple[np.ndarray, np.ndarray]:
     bond_idxs, bond_params = [], []
     for force in forces:
