@@ -186,7 +186,7 @@ class ProperTorsionHandler:
         torsion_idxs, param_idxs = generate_vd_idxs(mol, smirks) # generate these first anyway to query if omm
         assert len(torsion_idxs) == len(param_idxs)
         if hasattr(mol, 'openmm_system'):
-            proper_idxs, assigned_params = handle_omm_torsions(mol, torsion_idxs, proper = True)
+            assigned_params, proper_idxs = handle_omm_torsions(mol, torsion_idxs, proper = True)
             return assigned_params, proper_idxs
 
         scatter_idxs = []
@@ -257,7 +257,7 @@ class ImproperTorsionHandler(SerializableMixIn):
         if hasattr(mol, 'openmm_system'):
             torsion_idxs, param_idxs = generate_vd_idxs(mol, smirks) # query propers
             assert len(torsion_idxs) == len(param_idxs)
-            improper_idxs, assigned_params = handle_omm_torsions(mol, torsion_idxs, proper = False)
+            assigned_params, improper_idxs = handle_omm_torsions(mol, torsion_idxs, proper = False)
             return assigned_params, improper_idxs
         
         # improper torsions do not use a valence dict as
