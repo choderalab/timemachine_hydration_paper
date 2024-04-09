@@ -48,7 +48,7 @@ def annotate_mol_sys_torsions(mol, omm_system, ff):
     ptfs = [f for f in omm_system.getForces() if isinstance(f, omm.PeriodicTorsionForce)]
     omm_torsion_idxs, omm_assigned_params = idxs_params_from_t(ptfs)
     pt_torsion_idxs, param_idxs = generate_vd_idxs(mol, ff.pt_handle.smirks)
-    assert len(torsion_idxs) == len(param_idxs)
+    assert len(pt_torsion_idxs) == len(param_idxs)
     _proper_idxs = prune_torsions(omm_torsion_idxs, pt_torsion_idxs)
     _improper_idxs = np.array(
         [idx for idx in range(len(omm_torsion_idxs)) if idx not in _proper_idxs],
