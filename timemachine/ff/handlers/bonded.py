@@ -45,7 +45,7 @@ def annotate_mol_sys_torsions(mol, omm_system, ff):
     """setattrs `pt_idxs`, `it_idxs` for a `Chem.ROMol` given it as a `openmm_system` attr
     of type `openmm.System`
     """
-    ptfs = [f for f in omm_sys.getForces() if isinstance(f, omm.PeriodicTorsionForce)]
+    ptfs = [f for f in omm_system.getForces() if isinstance(f, omm.PeriodicTorsionForce)]
     omm_torsion_idxs, omm_assigned_params = idxs_params_from_t(ptfs)
     pt_torsion_idxs, param_idxs = generate_vd_idxs(mol, ff.pt_handle.smirks)
     assert len(torsion_idxs) == len(param_idxs)
