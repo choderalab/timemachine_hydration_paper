@@ -148,6 +148,28 @@ class Forcefield:
             protein_ff=ff.protein_ff,
             water_ff=ff.water_ff,
         )
+    
+    @classmethod
+    def load_precomputed_from_file(cls, path_or_str: Union[str, Path]) -> "Forcefield":
+        """load a default forcefield where charges are read in from the Molblock"""
+        ff = cls.load_from_file(path_or_str)
+        q_handle = PrecomputedChargeHandler()
+        q_handle_intra = PrecomputedChargeHandler()
+        q_handle_solv = PrecomputedChargeHandler()
+        return Forcefield(
+            ff.hb_handle,
+            ff.ha_handle,
+            ff.pt_handle,
+            ff.it_handle,
+            q_handle=q_handle,
+            q_handle_solv=q_handle_solv,
+            q_handle_intra=q_handle_intra,
+            lj_handle=ff.lj_handle,
+            lj_handle_solv=ff.lj_handle_solv,
+            lj_handle_intra=ff.lj_handle_intra,
+            protein_ff=ff.protein_ff,
+            water_ff=ff.water_ff,
+        )
 
     @classmethod
     def from_handlers(
