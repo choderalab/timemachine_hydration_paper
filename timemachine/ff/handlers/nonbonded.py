@@ -7,12 +7,14 @@ import jax.numpy as jnp
 import networkx as nx
 import numpy as np
 from rdkit import Chem
+import openmm as omm
 
 from timemachine import constants
 from timemachine.ff.handlers.bcc_aromaticity import AromaticityModel
 from timemachine.ff.handlers.bcc_aromaticity import match_smirks as oe_match_smirks
 from timemachine.ff.handlers.serialize import SerializableMixIn
 from timemachine.ff.handlers.utils import canonicalize_bond
+from timemachine.ff.handlers.nonbonded import deserialize_nonbonded_force
 from timemachine.ff.handlers.utils import match_smirks as rd_match_smirks
 from timemachine.graph_utils import convert_to_nx
 
@@ -400,13 +402,21 @@ class LennardJonesHandler(NonbondedHandler):
         applied_parameters: np.array of shape (N, 2)
 
         """
-        param_idxs = generate_nonbonded_idxs(mol, smirks)
-        params = params[param_idxs]
-        sigmas = params[:, 0]
-        epsilons = params[:, 1]
-        # the raw parameters already in sqrt form.
-        # sigmas need to be divided by two
-        return jnp.stack([sigmas / 2, epsilons], axis=1)
+        if hasattr(mol, 'openmm_system'):
+            omm_sys = mol.openmm_system
+            N = omm_sys.getNumParticles()
+            nbfs = [f for f in omm_sys.getForces() if isinstance(f, omm.NonbondedForce)]
+            assert len(nbfs) == 1, f"only 1 `omm.NonbondedForce` is allowed"
+            nb_params, _, _, _ = deserialize_nonbonded(nbfs[0], N)
+            return jnp.array(nb_params[:,1:3]) # sigma, eps
+        else:
+            param_idxs = generate_nonbonded_idxs(mol, smirks)
+            params = params[param_idxs]
+            sigmas = params[:, 0]
+            epsilons = params[:, 1]
+            # the raw parameters already in sqrt form.
+            # sigmas need to be divided by two
+            return jnp.stack([sigmas / 2, epsilons], axis=1)
 
 
 class LennardJonesIntraHandler(LennardJonesHandler):
