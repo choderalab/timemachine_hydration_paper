@@ -14,7 +14,7 @@ from timemachine.ff.handlers.bcc_aromaticity import AromaticityModel
 from timemachine.ff.handlers.bcc_aromaticity import match_smirks as oe_match_smirks
 from timemachine.ff.handlers.serialize import SerializableMixIn
 from timemachine.ff.handlers.utils import canonicalize_bond
-from timemachine.ff.handlers.nonbonded import deserialize_nonbonded_force
+from timemachine.ff.handlers.openmm_deserializer import deserialize_nonbonded_force
 from timemachine.ff.handlers.utils import match_smirks as rd_match_smirks
 from timemachine.graph_utils import convert_to_nx
 
