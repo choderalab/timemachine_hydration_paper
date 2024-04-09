@@ -41,20 +41,20 @@ def prune_torsions(torsion_idxs, match_torsion_idxs):
         if any_matches: out_indices.append(_idx)
     return np.array(out_indices, dtype=np.int32)  
 
-def annotate_mol_torsions(mol, ff):
+def annotate_mol_sys_torsions(mol, omm_system, ff):
     """setattrs `pt_idxs`, `it_idxs` for a `Chem.ROMol` given it as a `openmm_system` attr
     of type `openmm.System`
     """
-    omm_sys = mol.openmm_system
     ptfs = [f for f in omm_sys.getForces() if isinstance(f, omm.PeriodicTorsionForce)]
     omm_torsion_idxs, omm_assigned_params = idxs_params_from_t(ptfs)
-    torsion_idxs, param_idxs = generate_vd_idxs(mol, ff.pt_handle.smirks)
+    pt_torsion_idxs, param_idxs = generate_vd_idxs(mol, ff.pt_handle.smirks)
     assert len(torsion_idxs) == len(param_idxs)
-    _proper_idxs = prune_torsions(torsion_idxs, template_pt_idxs)
+    _proper_idxs = prune_torsions(omm_torsion_idxs, pt_torsion_idxs)
     _improper_idxs = np.array(
-        [idx for idx in range(len(torsion_idxs)) if idx not in _proper_idxs],
+        [idx for idx in range(len(omm_torsion_idxs)) if idx not in _proper_idxs],
         dtype=np.int32
     )
+    setattr(mol, 'openmm_system', omm_system)
     setattr(mol, 'pt_idxs', _proper_idxs)
     setattr(mol, 'it_idxs', _improper_idxs)
 
@@ -63,7 +63,7 @@ def handle_omm_torsions(mol, proper = True):
     omm_torsion_idxs, omm_assigned_params = idxs_params_from_t(ptfs)
     _proper_idxs = mol.pt_idxs
     _improper_idxs = mol.it_idxs
-    choice_idxs = mol.pt_idxs
+    choice_idxs = mol.pt_idxs if proper else mol.it_idxs
     idxs = omm_torsion_idxs[choice_idxs,:]
     assigned_params = omm_assigned_params[choice_idxs,:]
     return assigned_params, idxs
@@ -198,34 +198,33 @@ class ProperTorsionHandler:
     def static_parameterize(params, smirks, counts, mol):
         if hasattr(mol, 'openmm_system'):
             assigned_params, proper_idxs = handle_omm_torsions(mol, proper = True)
-            return assigned_params, proper_idxs
-
-        torsion_idxs, param_idxs = generate_vd_idxs(mol, smirks)
-        assert len(torsion_idxs) == len(param_idxs)
-        scatter_idxs = []
-        repeats = []
-
-        # prefix sum of size + 1
-        pfxsum = np.concatenate([[0], np.cumsum(counts)])
-        for p_idx in param_idxs:
-            start = pfxsum[p_idx]
-            end = pfxsum[p_idx + 1]
-            scatter_idxs.extend((range(start, end)))
-            repeats.append(counts[p_idx])
-
-        # for k, _, _ in params[scatter_idxs]:
-        # if k == 0.0:
-        # print("WARNING: zero force constant torsion generated.")
-
-        scatter_idxs = np.array(scatter_idxs)
-
-        # if no matches found, return arrays that can still be concatenated as expected
-        if len(param_idxs) > 0:
-            assigned_params = params[scatter_idxs]
-            proper_idxs = np.repeat(torsion_idxs, repeats, axis=0).astype(np.int32)
         else:
-            assigned_params = params[:0]  # empty slice with same dtype, other dimensions
-            proper_idxs = np.zeros((0, 4), dtype=np.int32)
+            torsion_idxs, param_idxs = generate_vd_idxs(mol, smirks)
+            assert len(torsion_idxs) == len(param_idxs)
+            scatter_idxs = []
+            repeats = []
+
+            # prefix sum of size + 1
+            pfxsum = np.concatenate([[0], np.cumsum(counts)])
+            for p_idx in param_idxs:
+                start = pfxsum[p_idx]
+                end = pfxsum[p_idx + 1]
+                scatter_idxs.extend((range(start, end)))
+                repeats.append(counts[p_idx])
+
+            # for k, _, _ in params[scatter_idxs]:
+            # if k == 0.0:
+            # print("WARNING: zero force constant torsion generated.")
+
+            scatter_idxs = np.array(scatter_idxs)
+
+            # if no matches found, return arrays that can still be concatenated as expected
+            if len(param_idxs) > 0:
+                assigned_params = params[scatter_idxs]
+                proper_idxs = np.repeat(torsion_idxs, repeats, axis=0).astype(np.int32)
+            else:
+                assigned_params = params[:0]  # empty slice with same dtype, other dimensions
+                proper_idxs = np.zeros((0, 4), dtype=np.int32)
 
         return assigned_params, proper_idxs
 
@@ -269,48 +268,47 @@ class ImproperTorsionHandler(SerializableMixIn):
         # first query omm system:
         if hasattr(mol, 'openmm_system'):
             assigned_params, improper_idxs = handle_omm_torsions(mol, proper = False)
-            return assigned_params, improper_idxs
-        
-        # improper torsions do not use a valence dict as
-        # we cannot sort based on b_idxs[0] and b_idxs[-1]
-        # and reverse if needed. Impropers are centered around
-        # the first atom.
-        impropers = dict()
-
-        def make_key(idxs):
-            assert len(idxs) == 4
-            # pivot around the center
-            ctr = idxs[1]
-            # sort the neighbors so they're unique
-            nbs = idxs[0], idxs[2], idxs[3]
-            nbs = sorted(nbs)
-            return nbs[0], ctr, nbs[1], nbs[2]
-
-        for p_idx, patt in enumerate(smirks):
-            matches = match_smirks(mol, patt)
-
-            for m in matches:
-                key = make_key(m)
-                impropers[key] = p_idx
-
-        improper_idxs = []
-        param_idxs = []
-
-        for atom_idxs, p_idx in impropers.items():
-            center = atom_idxs[1]
-            others = [atom_idxs[0], atom_idxs[2], atom_idxs[3]]
-            for p in [(others[i], others[j], others[k]) for (i, j, k) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)]]:
-                improper_idxs.append(canonicalize_bond((center, p[0], p[1], p[2])))
-                param_idxs.append(p_idx)
-
-        param_idxs = np.array(param_idxs)
-
-        # if no matches found, return arrays that can still be concatenated as expected
-        if len(param_idxs) > 0:
-            assigned_params = params[param_idxs]
-            improper_idxs = np.array(improper_idxs, dtype=np.int32)
         else:
-            assigned_params = params[:0]  # empty slice with same dtype, other dimensions
-            improper_idxs = np.zeros((0, 4), dtype=np.int32)
+            # improper torsions do not use a valence dict as
+            # we cannot sort based on b_idxs[0] and b_idxs[-1]
+            # and reverse if needed. Impropers are centered around
+            # the first atom.
+            impropers = dict()
+
+            def make_key(idxs):
+                assert len(idxs) == 4
+                # pivot around the center
+                ctr = idxs[1]
+                # sort the neighbors so they're unique
+                nbs = idxs[0], idxs[2], idxs[3]
+                nbs = sorted(nbs)
+                return nbs[0], ctr, nbs[1], nbs[2]
+
+            for p_idx, patt in enumerate(smirks):
+                matches = match_smirks(mol, patt)
+
+                for m in matches:
+                    key = make_key(m)
+                    impropers[key] = p_idx
+
+            improper_idxs = []
+            param_idxs = []
+
+            for atom_idxs, p_idx in impropers.items():
+                center = atom_idxs[1]
+                others = [atom_idxs[0], atom_idxs[2], atom_idxs[3]]
+                for p in [(others[i], others[j], others[k]) for (i, j, k) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)]]:
+                    improper_idxs.append(canonicalize_bond((center, p[0], p[1], p[2])))
+                    param_idxs.append(p_idx)
+
+            param_idxs = np.array(param_idxs)
+
+            # if no matches found, return arrays that can still be concatenated as expected
+            if len(param_idxs) > 0:
+                assigned_params = params[param_idxs]
+                improper_idxs = np.array(improper_idxs, dtype=np.int32)
+            else:
+                assigned_params = params[:0]  # empty slice with same dtype, other dimensions
+                improper_idxs = np.zeros((0, 4), dtype=np.int32)
 
         return assigned_params, improper_idxs
