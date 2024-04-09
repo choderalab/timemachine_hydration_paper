@@ -407,7 +407,7 @@ class LennardJonesHandler(NonbondedHandler):
             N = omm_sys.getNumParticles()
             nbfs = [f for f in omm_sys.getForces() if isinstance(f, omm.NonbondedForce)]
             assert len(nbfs) == 1, f"only 1 `omm.NonbondedForce` is allowed"
-            nb_params, _, _, _ = deserialize_nonbonded(nbfs[0], N)
+            nb_params, _, _, _ = deserialize_nonbonded_force(nbfs[0], N)
             return jnp.array(nb_params[:,1:3]) # sigma, eps
         else:
             param_idxs = generate_nonbonded_idxs(mol, smirks)
