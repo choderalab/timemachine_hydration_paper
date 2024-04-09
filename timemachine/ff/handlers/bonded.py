@@ -10,30 +10,6 @@ from timemachine.ff.handlers.openmm_deserializer import (
     idxs_params_from_t,
     )
 
-def prune_torsions(torsion_idxs, match_torsion_idxs):
-    """return indices of arg0 for which there are any matches in arg1"""
-    out_indices = []
-    for _idx, torsion_idx in enumerate(torsion_idxs):
-        matches = np.array(
-            [np.any([np.all(torsion_idx == pt_idx), 
-                     np.all(torsion_idx[::-1] == pt_idx)]) for pt_idx in match_torsion_idxs])
-        any_matches = np.any(matches)
-        if any_matches: out_indices.append(_idx)
-    return np.array(out_indices, dtype=np.int32)  
-
-def handle_omm_torsions(mol, template_pt_idxs, proper = True):
-    ptfs = [f for f in mol.openmm_system.getForces() if isinstance(f, omm.PeriodicTorsionForce)]
-    omm_torsion_idxs, omm_assigned_params = idxs_params_from_t(ptfs)
-    _proper_idxs = prune_torsions(omm_torsion_idxs, template_pt_idxs)
-    _improper_idxs = np.array(
-        [idx for idx in range(len(omm_torsion_idxs)) if idx not in _proper_idxs],
-        dtype=np.int32
-    )
-    choice_idxs = _proper_idxs if proper else _improper_idxs
-    idxs = omm_torsion_idxs[choice_idxs,:]
-    assigned_params = omm_assigned_params[choice_idxs,:]
-    return assigned_params, idxs
-
 def generate_vd_idxs(mol, smirks):
     """
     Generate bonded indices using a valence dict. The indices generated
@@ -54,6 +30,43 @@ def generate_vd_idxs(mol, smirks):
 
     return bond_idxs, param_idxs
 
+def prune_torsions(torsion_idxs, match_torsion_idxs):
+    """return indices of arg0 for which there are any matches in arg1"""
+    out_indices = []
+    for _idx, torsion_idx in enumerate(torsion_idxs):
+        matches = np.array(
+            [np.any([np.all(torsion_idx == pt_idx), 
+                     np.all(torsion_idx[::-1] == pt_idx)]) for pt_idx in match_torsion_idxs])
+        any_matches = np.any(matches)
+        if any_matches: out_indices.append(_idx)
+    return np.array(out_indices, dtype=np.int32)  
+
+def annotate_mol_torsions(mol, ff):
+    """setattrs `pt_idxs`, `it_idxs` for a `Chem.ROMol` given it as a `openmm_system` attr
+    of type `openmm.System`
+    """
+    omm_sys = mol.openmm_system
+    ptfs = [f for f in omm_sys.getForces() if isinstance(f, omm.PeriodicTorsionForce)]
+    omm_torsion_idxs, omm_assigned_params = idxs_params_from_t(ptfs)
+    torsion_idxs, param_idxs = generate_vd_idxs(mol, ff.pt_handle.smirks)
+    assert len(torsion_idxs) == len(param_idxs)
+    _proper_idxs = prune_torsions(torsion_idxs, template_pt_idxs)
+    _improper_idxs = np.array(
+        [idx for idx in range(len(torsion_idxs)) if idx not in _proper_idxs],
+        dtype=np.int32
+    )
+    setattr(mol, 'pt_idxs', _proper_idxs)
+    setattr(mol, 'it_idxs', _improper_idxs)
+
+def handle_omm_torsions(mol, proper = True):
+    ptfs = [f for f in mol.openmm_system.getForces() if isinstance(f, omm.PeriodicTorsionForce)]
+    omm_torsion_idxs, omm_assigned_params = idxs_params_from_t(ptfs)
+    _proper_idxs = mol.pt_idxs
+    _improper_idxs = mol.it_idxs
+    choice_idxs = mol.pt_idxs
+    idxs = omm_torsion_idxs[choice_idxs,:]
+    assigned_params = omm_assigned_params[choice_idxs,:]
+    return assigned_params, idxs
 
 # its trivial to re-use this for everything except the ImproperTorsions
 class ReversibleBondHandler(SerializableMixIn):
@@ -183,12 +196,12 @@ class ProperTorsionHandler:
 
     @staticmethod
     def static_parameterize(params, smirks, counts, mol):
-        torsion_idxs, param_idxs = generate_vd_idxs(mol, smirks) # generate these first anyway to query if omm
-        assert len(torsion_idxs) == len(param_idxs)
         if hasattr(mol, 'openmm_system'):
-            assigned_params, proper_idxs = handle_omm_torsions(mol, torsion_idxs, proper = True)
+            assigned_params, proper_idxs = handle_omm_torsions(mol, proper = True)
             return assigned_params, proper_idxs
 
+        torsion_idxs, param_idxs = generate_vd_idxs(mol, smirks)
+        assert len(torsion_idxs) == len(param_idxs)
         scatter_idxs = []
         repeats = []
 
@@ -255,9 +268,7 @@ class ImproperTorsionHandler(SerializableMixIn):
     def static_parameterize(params, smirks, mol):
         # first query omm system:
         if hasattr(mol, 'openmm_system'):
-            torsion_idxs, param_idxs = generate_vd_idxs(mol, smirks) # query propers
-            assert len(torsion_idxs) == len(param_idxs)
-            assigned_params, improper_idxs = handle_omm_torsions(mol, torsion_idxs, proper = False)
+            assigned_params, improper_idxs = handle_omm_torsions(mol, proper = False)
             return assigned_params, improper_idxs
         
         # improper torsions do not use a valence dict as
