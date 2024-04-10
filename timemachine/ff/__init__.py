@@ -10,6 +10,11 @@ from timemachine.ff.handlers.deserialize import deserialize_handlers
 from timemachine.ff.handlers.nonbonded import PrecomputedChargeHandler
 from timemachine.ff.handlers.serialize import serialize_handlers
 
+# these are dicey imports...
+import espaloma as esp
+from openff.toolkit.topology import Molecule
+from openff.toolkit.typing.engines.smirnoff import ForceField
+
 _T = TypeVar("_T")
 
 
@@ -328,3 +333,31 @@ def sanitize_water_ff(water_ff: str) -> str:
     if water_ff.lower() in ["tip4p", "tip4pew", "tip4pfb"]:
         return "tip4p"
     return water_ff
+
+def make_mol_omm_sys(mol, smirnoff_specs = (2,1,0), charge_spec = 'am1bcc', esp_model=None):
+    """return a charged rdit mol, off-parameterized `openmm.System` object, 
+    and a timemachine `Forcefield`"""
+    sm1, sm2, sm3 = smirnoff_specs
+    tm_ff = Forcefield.load_precomputed_from_file(f"smirnoff_{sm1}_{sm2}_{sm3}_ccc.py")
+    off_mol = Molecule.from_rdkit(mol)
+    if esp_model is None:
+        off_mol.assign_partial_charges(charge_spec)
+        off_ff = ForceField(f"openff_unconstrained-{sm1}.{sm2}.{sm3}.offxml")
+        off_omm_sys = off_ff.create_openmm_system(
+            off_mol.to_topology(),
+            charge_from_molecules=[off_mol],
+            allow_nonintegral_charges=True,
+        )
+        molecule_graph = None
+    else: # espaloma routine
+        charge_spec = 'am1-bcc' if charge_spec == 'am1bcc' else charge_spec # becaue esp is inconsistent
+        molecule_graph = esp.Graph(off_mol)
+        _ = esp_model(molecule_graph.heterograph)
+        off_omm_sys = esp.graphs.deploy.openmm_system_from_graph(
+            molecule_graph, 
+            forcefield = f"openff_unconstrained-{sm1}.{sm2}.{sm3}", 
+            charge_method = charge_spec,
+            )
+        off_mol = molecule_graph.mol # this is charged because `openmm_syste_from_graphs` annotates in place
+    charged_mol = Molecule.to_rdkit(off_mol)
+    return charged_mol, off_omm_sys, tm_ff, molecule_graph

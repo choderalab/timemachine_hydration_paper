@@ -13,8 +13,83 @@ from timemachine import potentials
 from timemachine.fe import topology
 from timemachine.fe.topology import BaseTopology, DualTopology, DualTopologyMinimization
 from timemachine.fe.utils import get_mol_name, get_romol_conf, read_sdf, set_romol_conf
-from timemachine.ff import Forcefield
+from timemachine.ff import Forcefield, make_mol_omm_sys
+from timemachine.ff.openmm_deserializer import deserialize_system
+from timemachine.ff.bonded import annotate_mol_sys_torsions
 
+def validate_omm_mol_param_routine(mol, smirnoff_specs = (2, 1, 0), charge_spec = 'am1bcc'):
+    """assert energy by energy match validation for a deserialized `openmm.System`
+    parameterized by smirnoff x.y.z w/ am1bcc charges and the `BaseTopology` `VacuumSystem`
+    parameterized by the annotated `openmm.System` route.
+
+    Strictly speaking, this is not a test of the `topology` routine, rather the handlers;
+    however in the interest of running rbfes (which use `BaseTopology` parameterizations),
+    it is in my interest to test interoperability directly with the `BaseTopology`.
+    """
+    mol, off_omm_sys, tm_ff, _ = make_mol_omm_sys(mol, smirnoff_specs, charge_spec)
+    conf = get_romol_conf(mol)
+
+    # make reference
+    reference_bps, _ = deserialize_system(off_omm_sys, 1.2)
+    reference_energies = {bp.potential.__class__.__name__: bp(conf, None) for bp in reference_bps}
+
+    # now base topology
+    annotate_mol_sys_torsions(mol, off_omm_sys, None, tm_ff)
+    bt = BaseTopology(mol, tm_ff)
+    bt_sys = bt.setup_end_state()
+
+    # validate bonds
+    bt_bond_e = bt_sys.bond(conf, None)
+    bt_angle_e = bt_sys.angle(conf, None)
+    bt_torsion_e = bt_sys.torsion(conf, None)
+    bt_nonbonded_e = bt_sys.nonbonded(conf, None)
+    assert np.isclose(bt_bond_e, reference_energies['HarmonicBond'])
+    assert np.isclose(bt_angle_e, reference_energies['HarmonicAngle'])
+    assert np.isclose(bt_torsion_e, reference_energies['PeriodicTorsion'])
+    assert np.isclose(bt_nonbonded_e, reference_energies['Nonbonded'])
+
+def test_validate_omm_mol_param_routine():
+    """test that `BaseTopology`'s vacuum system generated from 
+    an `openmm.System` annotated mol matches energies of a
+    directly deserialized `openmm.System`;
+    this is tested for 3 mols.
+    Strictly speaking, this is not a test of the `topology` routine, rather the handlers;
+    however in the interest of running rbfes (which use `BaseTopology` parameterizations),
+    it is in my interest to test interoperability directly with the `BaseTopology`."""
+    with resources.path("timemachine.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+        all_mols = read_sdf(str(path_to_ligand))
+    for mol in all_mols[:3]:
+        validate_omm_mol_param_routine(mol)
+
+def validate_omm_BaseTopology_param_routine(mol, smirnoff_specs = (2, 1, 0), charge_spec = 'am1bcc'):
+    """assert energy by energy match validation for a `mol` parameterized by
+    smirnoff x.y.z and `charge_spec` charges parameterized by `BaseTopology` 
+    and another `mol` annotated with an `openmm.System` object parameterized consistently.
+    """
+    # some of this boilerplate stuff is redundant. should reduce.
+    mol, off_omm_sys, tm_ff, _ = make_mol_omm_sys(mol, smirnoff_specs, charge_spec)
+    
+    conf = get_romol_conf(mol)
+
+    bt = BaseTopology(mol, tm_ff)
+    bt_sys = bt.setup_end_state()
+    annotate_mol_sys_torsions(mol, off_omm_sys, None, tm_ff)
+    mod_bt = BaseTopology(mol, tm_ff)
+    mod_bt_sys = mod_bt.setup_end_state()
+
+    assert np.isclose(bt_sys.bond(conf, None), mod_bt_sys.bond(conf, None))
+    assert np.isclose(bt_sys.angle(conf, None), mod_bt_sys.angle(conf, None))
+    assert np.isclose(bt_sys.torsion(conf, None), mod_bt_sys.torsion(conf, None))
+    assert np.isclose(bt_sys.nonbonded(conf, None), mod_bt_sys.nonbonded(conf, None))
+
+def test_validate_omm_BaseTopology_param_routine():
+    """make energy by force object matching assertions for an 
+    `openmm.System`-annotated mol created consistently with a parameterization
+    with the same specs without an `openmm.System`"""
+    with resources.path("timemachine.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+        all_mols = read_sdf(str(path_to_ligand))
+    for mol in all_mols[:3]:
+        validate_omm_BaseTopology_param_routine(mol)
 
 def test_dual_topology_nonbonded_pairlist():
     with resources.path("timemachine.testsystems.data", "ligands_40.sdf") as path_to_ligand:

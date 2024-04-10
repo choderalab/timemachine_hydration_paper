@@ -30,6 +30,48 @@ def generate_vd_idxs(mol, smirks):
 
     return bond_idxs, param_idxs
 
+def query_pt_it_idxs_from_g(g):
+    """query a heterograph (that has already parameterized an `openmm.System` object) for 
+    indices of proper and improper torsions"""
+    suffix = ""
+    pt_counts = 0
+    it_counts = 0
+    
+    # count pts; this is taken from espaloma's janky modifying of `openmm.System` objects
+    for idx in range(g.heterograph.number_of_nodes("n4")):
+        idx0 = g.nodes["n4"].data["idxs"][idx, 0].item()
+        idx1 = g.nodes["n4"].data["idxs"][idx, 1].item()
+        idx2 = g.nodes["n4"].data["idxs"][idx, 2].item()
+        idx3 = g.nodes["n4"].data["idxs"][idx, 3].item()
+
+        # assuming both (a,b,c,d) and (d,c,b,a) are listed for every torsion, only pick one of the orderings
+        if idx0 < idx3:
+            ks = g.nodes["n4"].data["k%s" % suffix][idx]
+            for sub_idx in range(ks.flatten().shape[0]):
+                k = ks[sub_idx].item()
+                if k != 0.0:
+                    pt_counts += 1
+
+    # it counts; 
+    if "k%s" % suffix in g.nodes["n4_improper"].data:
+        for idx in range(
+            g.heterograph.number_of_nodes("n4_improper")
+        ):
+            idx0 = g.nodes["n4_improper"].data["idxs"][idx, 0].item()
+            idx1 = g.nodes["n4_improper"].data["idxs"][idx, 1].item()
+            idx2 = g.nodes["n4_improper"].data["idxs"][idx, 2].item()
+            idx3 = g.nodes["n4_improper"].data["idxs"][idx, 3].item()
+
+            ks = g.nodes["n4_improper"].data["k%s" % suffix][idx]
+            for sub_idx in range(ks.flatten().shape[0]):
+                k = ks[sub_idx].item()
+                if k != 0.0:
+                    it_counts += 1
+    return (
+        np.arange(pt_counts, dtype=np.int32), 
+        np.arange(pt_counts, it_counts + pt_counts, dtype=np.int32) # since pts are added first
+    )
+
 def prune_torsions(torsion_idxs, match_torsion_idxs):
     """return indices of arg0 for which there are any matches in arg1"""
     out_indices = []
@@ -41,19 +83,28 @@ def prune_torsions(torsion_idxs, match_torsion_idxs):
         if any_matches: out_indices.append(_idx)
     return np.array(out_indices, dtype=np.int32)  
 
-def annotate_mol_sys_torsions(mol, omm_system, ff):
-    """setattrs `pt_idxs`, `it_idxs` for a `Chem.ROMol` given it as a `openmm_system` attr
-    of type `openmm.System`
+def annotate_mol_sys_torsions(mol, omm_system, mol_graph, ff):
+    """setattrs `pt_idxs`, `it_idxs` for a `Chem.ROMol` given it as a 
+    `openmm_system` attr of type `openmm.System`;
+    if `mol_graph` is None, proper/improper torsion indices will be found by 
+    querying proper torsion smirks in the `ff` object;
+    otherwise, the proper/improper torsion will be queried from the mol graph.
     """
     ptfs = [f for f in omm_system.getForces() if isinstance(f, omm.PeriodicTorsionForce)]
+    assert len(ptfs) == 1, f"only 1 periodic torsion force is handled at this time"
+    num_torsions = ptfs[0].getNumTorsions()
     omm_torsion_idxs, omm_assigned_params = idxs_params_from_t(ptfs)
-    pt_torsion_idxs, param_idxs = generate_vd_idxs(mol, ff.pt_handle.smirks)
-    assert len(pt_torsion_idxs) == len(param_idxs)
-    _proper_idxs = prune_torsions(omm_torsion_idxs, pt_torsion_idxs)
-    _improper_idxs = np.array(
-        [idx for idx in range(len(omm_torsion_idxs)) if idx not in _proper_idxs],
-        dtype=np.int32
-    )
+    if mol_graph is None:
+        pt_torsion_idxs, param_idxs = generate_vd_idxs(mol, ff.pt_handle.smirks)
+        assert len(pt_torsion_idxs) == len(param_idxs)
+        _proper_idxs = prune_torsions(omm_torsion_idxs, pt_torsion_idxs)
+        _improper_idxs = np.array(
+            [idx for idx in range(len(omm_torsion_idxs)) if idx not in _proper_idxs],
+            dtype=np.int32)
+    else:
+        _proper_idxs, _improper_idxs = query_pt_it_idxs_from_g(mol_graph)
+        assert len(_proper_idxs) + len(_improper_idxs) == num_torsions
+        
     setattr(mol, 'openmm_system', omm_system)
     setattr(mol, 'pt_idxs', _proper_idxs)
     setattr(mol, 'it_idxs', _improper_idxs)
