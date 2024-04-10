@@ -339,7 +339,7 @@ def make_mol_omm_sys(mol, smirnoff_specs = (2,1,0), charge_spec = 'am1bcc', esp_
     and a timemachine `Forcefield`"""
     sm1, sm2, sm3 = smirnoff_specs
     tm_ff = Forcefield.load_precomputed_from_file(f"smirnoff_{sm1}_{sm2}_{sm3}_ccc.py")
-    off_mol = Molecule.from_rdkit(mol)
+    off_mol = Molecule.from_rdkit(mol, hydrogens_are_explicit = True)
     if esp_model is None:
         off_mol.assign_partial_charges(charge_spec)
         off_ff = ForceField(f"openff_unconstrained-{sm1}.{sm2}.{sm3}.offxml")
