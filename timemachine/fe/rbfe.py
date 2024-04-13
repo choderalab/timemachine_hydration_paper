@@ -969,19 +969,6 @@ def run_edge_and_save_results(
 
         return file_client.full_path(path)
 
-    path = get_success_result_path(edge.mol_a_name, edge.mol_b_name)
-
-    if save_trajs == False: # need to empty the trajs
-        solvent_res.trajectories = [Trajectory.empty() for _ in solvent_res.final_result.initial_states]
-        complex_res.trajectories = [Trajectory.empty() for _ in complex_res.final_result.initial_states]
-    elif save_trajs == True: # do not modify
-        pass
-    else:
-        raise NotImplementedError(f"`save_trajs` must be in set(True, False); was given as: {save_trajs}")
-    
-    pkl_obj = (mol_a, mol_b, edge.metadata, core, solvent_res, solvent_top, complex_res, complex_top)
-    file_client.store(path, pickle.dumps(pkl_obj))
-
     solvent_ddg = sum(solvent_res.final_result.dGs)
     solvent_ddg_err = np.linalg.norm(solvent_res.final_result.dG_errs)
     complex_ddg = sum(complex_res.final_result.dGs)
@@ -1007,6 +994,18 @@ def run_edge_and_save_results(
             ]
         ),
     )
+
+    path = get_success_result_path(edge.mol_a_name, edge.mol_b_name)
+    if save_trajs == False: # need to empty the trajs
+        solvent_res.trajectories = [Trajectory.empty() for _ in solvent_res.final_result.initial_states]
+        complex_res.trajectories = [Trajectory.empty() for _ in complex_res.final_result.initial_states]
+    elif save_trajs == True: # do not modify
+        pass
+    else:
+        raise NotImplementedError(f"`save_trajs` must be in set(True, False); was given as: {save_trajs}")
+    
+    pkl_obj = (mol_a, mol_b, edge.metadata, core, solvent_res, solvent_top, complex_res, complex_top)
+    file_client.store(path, pickle.dumps(pkl_obj))
 
     return file_client.full_path(path)
 
