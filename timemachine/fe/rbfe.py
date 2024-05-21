@@ -13,6 +13,8 @@ from openmm import app
 from rdkit import Chem
 
 from timemachine.constants import DEFAULT_ATOM_MAPPING_KWARGS, DEFAULT_PRESSURE, DEFAULT_TEMP
+from timemachine.potentials.nonbonded import coulomb_prefactors_on_traj, DEFAULT_CHUNK_SIZE
+from timemachine.potentials.potentials import Nonbonded # need to query nonbonded host-host potential
 from timemachine.fe import atom_mapping, model_utils
 from timemachine.fe.free_energy import (
     HostConfig,
@@ -65,7 +67,7 @@ class Host:
     num_water_atoms: int
 
 
-def ligand_frames_boxes_from_SimulationResult_endstates(res: SimulationResult):
+def ligand_frames_boxes_from_SimulationResult(res: SimulationResult):
     """get np.array frames and boxes of only ligand indices from a `SimulationResult`"""
     trajs = res.trajectories
     ligand_idxs = [
@@ -75,13 +77,57 @@ def ligand_frames_boxes_from_SimulationResult_endstates(res: SimulationResult):
     boxes = [traj.boxes for traj in trajs]
     return ligand_frames, boxes
 
+
 def clean_tmpdir_fn():
     """for clearing space..."""
     tmpdir = tempfile.TemporaryDirectory()
     result = subprocess.run([f"rm -rf {tmpdir}/*"], shell=True, capture_output=True)
     return result
 
-def cleanup(res, save_trajs, clean_tmpdir):
+
+def coulomb_prefactors_from_traj_state(
+    initial_state: InitialState, 
+    trajectory: Trajectory,
+    chunk_size = DEFAULT_CHUNK_SIZE) -> NDArray:
+    """query an initial state and call `coulomb_prefactors_on_traj`;
+    this will compute the electrostatic potential on every ligand particle
+    """
+    ligand_idxs = initial_state.ligand_idxs
+    
+    # query the nonbonded potential; this has the charges of all env particles;
+    # in this force, the ligand indices should all be zeroed out
+    nbfs = [bound_potential for bound_potential in initial_state.potentials if isinstance(bound_potential.potential, Nonbonded)]
+    assert len(nbfs) == 1
+    nbf = nbfs[0]
+    charges = nbf.params[:,0]
+    ligand_charges = charges[ligand_idxs]
+    assert np.allclose(ligand_charges, 0.), f"ligand charges: {ligand_charges}" # all ligand idx charges should be zero
+
+    # get env idxs
+    env_idxs = np.array([i for i in range(nbf.params.shape[0]) if i not in ligand_idxs], dtype = ligand_idxs.dtype)
+
+    # get auxiliary params
+    beta, cutoff = nbf.potential.beta, nbf.potential.cutoff
+
+    # turn traj frames and boxes into NDArrays
+    frames_as_arr = np.concatenate([frame[np.newaxis, ...] for frame in trajectory.frames], axis=0)
+    boxes_as_arr = np.concatenate([box[np.newaxis, ...] for box in trajectory.boxes], axis=0)
+
+    prefactors = coulomb_prefactors_on_traj(traj = frames_as_arr, 
+                                            boxes = boxes_as_arr, 
+                                            charges = charges, 
+                                            ligand_indices = ligand_idxs, 
+                                            env_indices = env_idxs, 
+                                            beta=beta, 
+                                            cutoff=cutoff, 
+                                            chunk_size=chunk_size)
+    return prefactors
+
+
+def cleanup(
+    res: SimulationResult, 
+    save_trajs: Union[bool, str], 
+    clean_tmpdir: bool):
     """perform cleanup on trajs for disk saving purposes and return necessary saveables;
      here, we want to save the appropriate ligand traj indices (as np array), clear traj, then remove tempdir.
     1. perhaps save ligand trajs as NDArray w/ boxes.
@@ -94,7 +140,7 @@ def cleanup(res, save_trajs, clean_tmpdir):
     elif save_trajs == True: # do not clear traj
         pass
     elif save_trajs == 'ligand_only':
-        ligand_frames, boxes = ligand_frames_boxes_from_SimulationResult_endstates(res)
+        ligand_frames, boxes = ligand_frames_boxes_from_SimulationResult(res)
         res.trajectories = [Trajectory.empty() for _ in res.final_result.initial_states]
     else:
         raise NotImplementedError(f"`save_trajs` must be in set(True, False, 'ligand_only'); was given as: {save_trajs}")
@@ -106,7 +152,6 @@ def cleanup(res, save_trajs, clean_tmpdir):
             clean_tmpdir_fn()
     
     return ligand_frames, boxes
-    
 
 
 def setup_in_vacuum(st: SingleTopology, ligand_conf, lamb):
@@ -963,6 +1008,7 @@ def run_edge_and_save_results(
     md_params: MDParams = DEFAULT_MD_PARAMS,
     save_trajs: Union[bool, str]=True, # either bool or `ligand_only`
     clean_tmpdir: bool=True, # whether to clear the tempdir between phases
+    compute_coulomb_prefactors: bool=True, # whether to compute coulomb prefactors on ligand idxs
 ):
     # Ensure that all mol props (e.g. _Name) are included in pickles
     # Without this get_mol_name(mol) will fail on roundtripped mol
@@ -1009,10 +1055,19 @@ def run_edge_and_save_results(
                 f"{edge_prefix}_complex_hrex_replica_state_distribution_heatmap.png",
                 complex_res.hrex_plots.replica_state_distribution_heatmap_png,
             )
+        
+        # attempt to compute coulomb prefactors
+        if compute_coulomb_prefactors:
+            # `Nonbonded` (host-host) potential energy doesn't change with lambda
+            # so it doesn't matter what initial state we use. 
+            initial_state = complex_res.final_result.initial_states[0]
+            complex_init_prefactors = [coulomb_prefactors_from_traj_state(initial_state, traj) for traj in complex_res.trajectories]
+        else:
+            complex_init_prefactors = None
 
         complex_ligand_frames, complex_boxes = cleanup(complex_res, save_trajs, clean_tmpdir)
-        
-
+    
+        # moving onto solvent...
         solvent_res, solvent_top, _ = run_solvent(
             mol_a,
             mol_b,
@@ -1038,6 +1093,13 @@ def run_edge_and_save_results(
                 f"{edge_prefix}_solvent_hrex_replica_state_distribution_heatmap.png",
                 solvent_res.hrex_plots.replica_state_distribution_heatmap_png,
             )
+
+        if compute_coulomb_prefactors: 
+            initial_state = solvent_res.final_result.initial_states[0]
+            solvent_init_prefactors = [coulomb_prefactors_from_traj_state(initial_state, traj) for traj in solvent_res.trajectories]
+        else:
+            solvent_init_prefactors = None
+
         solvent_ligand_frames, solvent_boxes = cleanup(solvent_res, save_trajs, clean_tmpdir)
 
     except Exception as err:
@@ -1091,11 +1153,13 @@ def run_edge_and_save_results(
         ),
     )
     
-    pkl_obj = (mol_a, mol_b, edge.metadata, core, 
-    solvent_res, solvent_top, 
-    complex_res, complex_top, 
-    complex_ligand_frames, complex_boxes,
-    solvent_ligand_frames, solvent_boxes
+    pkl_obj = (
+        mol_a, mol_b, edge.metadata, core, 
+        solvent_res, solvent_top, 
+        complex_res, complex_top, 
+        complex_ligand_frames, complex_boxes,
+        solvent_ligand_frames, solvent_boxes,
+        complex_init_prefactors, solvent_init_prefactors
     )
     file_client.store(path, pickle.dumps(pkl_obj))
 
