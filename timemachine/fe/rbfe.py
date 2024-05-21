@@ -1,6 +1,8 @@
 import pickle
 import traceback
 import warnings
+import tempfile
+import subprocess
 from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple, Union, cast
@@ -61,6 +63,50 @@ class Host:
     conf: NDArray
     box: NDArray
     num_water_atoms: int
+
+
+def ligand_frames_boxes_from_SimulationResult_endstates(res: SimulationResult):
+    """get np.array frames and boxes of only ligand indices from a `SimulationResult`"""
+    trajs = res.trajectories
+    ligand_idxs = [
+        state.ligand_idxs for state in res.final_result.initial_states
+    ]
+    ligand_frames = [traj.frames[_ligand_idxs] for traj, _ligand_idxs in zip(trajs, ligand_idxs)]
+    boxes = [traj.boxes for traj in trajs]
+    return ligand_frames, boxes
+
+def clean_tmpdir_fn():
+    """for clearing space..."""
+    tmpdir = tempfile.TemporaryDirectory()
+    result = subprocess.run([f"rm -rf {tmpdir}/*"], shell=True, capture_output=True)
+    return result
+
+def cleanup(res, save_trajs, clean_tmpdir):
+    """perform cleanup on trajs for disk saving purposes and return necessary saveables;
+     here, we want to save the appropriate ligand traj indices (as np array), clear traj, then remove tempdir.
+    1. perhaps save ligand trajs as NDArray w/ boxes.
+    2. clear the traj.
+    3. remove the tempdir for storage space purposes.
+    """
+    ligand_frames, boxes = None, None
+    if save_trajs == False: # need to empty the trajs
+        res.trajectories = [Trajectory.empty() for _ in res.final_result.initial_states]
+    elif save_trajs == True: # do not clear traj
+        pass
+    elif save_trajs == 'ligand_only':
+        ligand_frames, boxes = ligand_frames_boxes_from_SimulationResult_endstates(res)
+        res.trajectories = [Trajectory.empty() for _ in res.final_result.initial_states]
+    else:
+        raise NotImplementedError(f"`save_trajs` must be in set(True, False, 'ligand_only'); was given as: {save_trajs}")
+    
+    if clean_tmpdir:
+        if save_trajs == True:
+            print(f"will not clean `tmpdir` since `Trajectories` are saving")
+        else:
+            clean_tmpdir_fn()
+    
+    return ligand_frames, boxes
+    
 
 
 def setup_in_vacuum(st: SingleTopology, ligand_conf, lamb):
@@ -915,7 +961,8 @@ def run_edge_and_save_results(
     file_client: AbstractFileClient,
     n_windows: Optional[int],
     md_params: MDParams = DEFAULT_MD_PARAMS,
-    save_trajs: bool=True,
+    save_trajs: Union[bool, str]=True, # either bool or `ligand_only`
+    clean_tmpdir: bool=True, # whether to clear the tempdir between phases
 ):
     # Ensure that all mol props (e.g. _Name) are included in pickles
     # Without this get_mol_name(mol) will fail on roundtripped mol
@@ -926,6 +973,8 @@ def run_edge_and_save_results(
     try:
         mol_a = mols[edge.mol_a_name]
         mol_b = mols[edge.mol_b_name]
+
+        path = get_success_result_path(edge.mol_a_name, edge.mol_b_name) # get the success results path in case passes
 
         all_cores = atom_mapping.get_cores(
             mol_a,
@@ -944,7 +993,7 @@ def run_edge_and_save_results(
             n_windows=n_windows,
         )
 
-        if complex_res.hrex_plots:
+        if complex_res.hrex_plots: # save diagnostic plots
             file_client.store(
                 f"{edge_prefix}_complex_hrex_transition_matrix.png", complex_res.hrex_plots.transition_matrix_png
             )
@@ -960,6 +1009,9 @@ def run_edge_and_save_results(
                 f"{edge_prefix}_complex_hrex_replica_state_distribution_heatmap.png",
                 complex_res.hrex_plots.replica_state_distribution_heatmap_png,
             )
+
+        complex_ligand_frames, complex_boxes = cleanup(complex_res, save_trajs, clean_tmpdir)
+        
 
         solvent_res, solvent_top, _ = run_solvent(
             mol_a,
@@ -986,6 +1038,7 @@ def run_edge_and_save_results(
                 f"{edge_prefix}_solvent_hrex_replica_state_distribution_heatmap.png",
                 solvent_res.hrex_plots.replica_state_distribution_heatmap_png,
             )
+        solvent_ligand_frames, solvent_boxes = cleanup(solvent_res, save_trajs, clean_tmpdir)
 
     except Exception as err:
         print(
@@ -1037,17 +1090,13 @@ def run_edge_and_save_results(
             ]
         ),
     )
-
-    path = get_success_result_path(edge.mol_a_name, edge.mol_b_name)
-    if save_trajs == False: # need to empty the trajs
-        solvent_res.trajectories = [Trajectory.empty() for _ in solvent_res.final_result.initial_states]
-        complex_res.trajectories = [Trajectory.empty() for _ in complex_res.final_result.initial_states]
-    elif save_trajs == True: # do not modify
-        pass
-    else:
-        raise NotImplementedError(f"`save_trajs` must be in set(True, False); was given as: {save_trajs}")
     
-    pkl_obj = (mol_a, mol_b, edge.metadata, core, solvent_res, solvent_top, complex_res, complex_top)
+    pkl_obj = (mol_a, mol_b, edge.metadata, core, 
+    solvent_res, solvent_top, 
+    complex_res, complex_top, 
+    complex_ligand_frames, complex_boxes,
+    solvent_ligand_frames, solvent_boxes
+    )
     file_client.store(path, pickle.dumps(pkl_obj))
 
     return file_client.full_path(path)
