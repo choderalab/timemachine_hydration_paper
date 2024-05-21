@@ -73,7 +73,7 @@ def ligand_frames_boxes_from_SimulationResult(res: SimulationResult):
     ligand_idxs = [
         state.ligand_idxs for state in res.final_result.initial_states
     ]
-    ligand_frames = [traj.frames[_ligand_idxs] for traj, _ligand_idxs in zip(trajs, ligand_idxs)]
+    ligand_frames = [traj.frames[:,_ligand_idxs,:] for traj, _ligand_idxs in zip(trajs, ligand_idxs)]
     boxes = [traj.boxes for traj in trajs]
     return ligand_frames, boxes
 
