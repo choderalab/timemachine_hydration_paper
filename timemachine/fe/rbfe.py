@@ -80,8 +80,8 @@ def ligand_frames_boxes_from_SimulationResult(res: SimulationResult):
 
 def clean_tmpdir_fn():
     """for clearing space..."""
-    tmpdir = tempfile.TemporaryDirectory()
-    result = subprocess.run([f"rm -rf {tmpdir}/*"], shell=True, capture_output=True)
+    result = subprocess.run([f"rm -rf $TMPDIR/*"], shell=True, capture_output=True)
+    print(f"result of tmpdir removal: {result}")
     return result
 
 
