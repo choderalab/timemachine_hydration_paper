@@ -1,6 +1,8 @@
 import pickle
 import traceback
 import warnings
+import tempfile
+import subprocess
 from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple, Union, cast
@@ -53,6 +55,51 @@ DEFAULT_MD_PARAMS = MDParams(n_frames=1000, n_eq_steps=10_000, steps_per_frame=4
 
 DEFAULT_HREX_PARAMS = replace(DEFAULT_MD_PARAMS, hrex_params=HREXParams(n_frames_bisection=100))
 
+
+def ligand_frames_boxes_from_SimulationResult(res: SimulationResult):
+    """get np.array frames and boxes of only ligand indices from a `SimulationResult`"""
+    trajs = res.trajectories
+    ligand_idxs = [
+        state.ligand_idxs for state in res.final_result.initial_states
+    ]
+    ligand_frames = [[frame[_ligand_idxs,:] for frame in traj.frames] for traj, _ligand_idxs in zip(trajs, ligand_idxs)]
+    boxes = [traj.boxes for traj in trajs]
+    return ligand_frames, boxes
+
+def clean_tmpdir_fn():
+    """for clearing space..."""
+    result = subprocess.run([f"rm -rf $TMPDIR/*"], shell=True, capture_output=True)
+    print(f"result of tmpdir removal: {result}")
+    return result
+
+def cleanup(
+    res: SimulationResult, 
+    save_trajs: Union[bool, str], 
+    clean_tmpdir: bool):
+    """perform cleanup on trajs for disk saving purposes and return necessary saveables;
+     here, we want to save the appropriate ligand traj indices (as np array), clear traj, then remove tempdir.
+    1. perhaps save ligand trajs as NDArray w/ boxes.
+    2. clear the traj.
+    3. remove the tempdir for storage space purposes.
+    """
+    ligand_frames, boxes = None, None
+    if save_trajs == False: # need to empty the trajs
+        res.trajectories = [Trajectory.empty() for _ in res.final_result.initial_states]
+    elif save_trajs == True: # do not clear traj
+        pass
+    elif save_trajs == 'ligand_only':
+        ligand_frames, boxes = ligand_frames_boxes_from_SimulationResult(res)
+        res.trajectories = [Trajectory.empty() for _ in res.final_result.initial_states]
+    else:
+        raise NotImplementedError(f"`save_trajs` must be in set(True, False, 'ligand_only'); was given as: {save_trajs}")
+
+    if clean_tmpdir:
+        if save_trajs == True:
+            print(f"will not clean `tmpdir` since `Trajectories` are saving")
+        else:
+            clean_tmpdir_fn()
+
+    return ligand_frames, boxes
 
 @dataclass
 class Host:
@@ -961,6 +1008,8 @@ def run_edge_and_save_results(
     file_client: AbstractFileClient,
     n_windows: Optional[int],
     md_params: MDParams = DEFAULT_MD_PARAMS,
+    save_trajs: Union[bool, str]=True, # either bool or `ligand_only`
+    clean_tmpdir: bool=True, # whether to clear the tempdir between phases
 ):
     # Ensure that all mol props (e.g. _Name) are included in pickles
     # Without this get_mol_name(mol) will fail on roundtripped mol
@@ -1001,6 +1050,7 @@ def run_edge_and_save_results(
                 f"{edge_prefix}_complex_hrex_replica_state_distribution_heatmap.png",
                 complex_res.hrex_plots.replica_state_distribution_heatmap_png,
             )
+        complex_ligand_frames, complex_boxes = cleanup(complex_res, save_trajs, clean_tmpdir)
 
         solvent_res, solvent_top, _ = run_solvent(
             mol_a,
@@ -1023,6 +1073,7 @@ def run_edge_and_save_results(
                 f"{edge_prefix}_solvent_hrex_replica_state_distribution_heatmap.png",
                 solvent_res.hrex_plots.replica_state_distribution_heatmap_png,
             )
+        solvent_ligand_frames, solvent_boxes = cleanup(solvent_res, save_trajs, clean_tmpdir)
 
     except Exception as err:
         print(
@@ -1050,7 +1101,14 @@ def run_edge_and_save_results(
         return file_client.full_path(path)
 
     path = get_success_result_path(edge.mol_a_name, edge.mol_b_name)
-    pkl_obj = (mol_a, mol_b, edge.metadata, core, solvent_res, solvent_top, complex_res, complex_top)
+    pkl_obj = (
+        mol_a, mol_b, 
+        edge.metadata, core, 
+        solvent_res, solvent_top, 
+        complex_res, complex_top,
+        complex_ligand_frames, complex_boxes,
+        solvent_ligand_frames, solvent_boxes
+        )
     file_client.store(path, pickle.dumps(pkl_obj))
 
     solvent_ddg = sum(solvent_res.final_result.dGs)
