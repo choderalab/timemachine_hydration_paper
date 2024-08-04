@@ -1,3 +1,5 @@
+from typing import Any, Dict
+
 # physical constants
 BOLTZMANN = 1.380658e-23  # J/kelvin
 AVOGADRO = 6.0221367e23  # mol^-1
@@ -28,15 +30,17 @@ DEFAULT_CHIRAL_BOND_RESTRAINT_K = 999.9
 MAX_FORCE_NORM = 50000.0  # used to check norms in the gradient computations
 
 # atom mapping parameters
-DEFAULT_ATOM_MAPPING_KWARGS = {
+DEFAULT_ATOM_MAPPING_KWARGS: Dict[str, Any] = {
     "ring_cutoff": 0.12,
     "chain_cutoff": 0.2,
     "max_visits": 1e7,
-    "connected_core": True,
+    "max_connected_components": 1,
+    "min_connected_component_size": 1,
     "max_cores": 1e5,
     "enforce_core_core": True,
     "ring_matches_ring_only": True,
     "enforce_chiral": True,
     "disallow_planar_torsion_flips": True,
     "min_threshold": 0,
+    "initial_mapping": None,
 }

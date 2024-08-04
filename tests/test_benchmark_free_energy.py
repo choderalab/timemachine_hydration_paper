@@ -21,6 +21,7 @@ from timemachine.fe.free_energy import (
     run_sims_hrex,
     run_sims_sequential,
 )
+from timemachine.fe.lambda_schedule import bisection_lambda_schedule
 from timemachine.fe.rbfe import (
     DEFAULT_HREX_PARAMS,
     setup_initial_states,
@@ -78,19 +79,22 @@ def setup_hif2a_single_topology_leg(host_name: str, n_windows: int, lambda_endpo
     single_topology = SingleTopology(mol_a, mol_b, core, forcefield)
     host = setup_optimized_host(single_topology, host_config) if host_config else None
 
-    lambdas = np.linspace(lambda_endpoints[0], lambda_endpoints[1], n_windows)
+    lambda_grid = np.linspace(*lambda_endpoints, n_windows)
 
     initial_states = setup_initial_states(
-        single_topology, host, DEFAULT_TEMP, lambdas, seed=2023, min_cutoff=0.7 if host is not None else None
+        single_topology, host, DEFAULT_TEMP, lambda_grid, seed=2023, min_cutoff=0.7 if host_name == "complex" else None
     )
 
     n_frames = 500 // n_windows
+
+    assert len(initial_states) == n_windows
 
     return single_topology, host, host_name, n_frames, n_windows, initial_states
 
 
 def run_benchmark_hif2a_single_topology(hif2a_single_topology_leg, mode, enable_water_sampling) -> float:
     single_topology, host, host_name, n_frames, n_windows, initial_states = hif2a_single_topology_leg
+    assert n_windows >= 2
     if host_name != "complex" and enable_water_sampling:
         pytest.skip("Water sampling disabled outside of complex")
 
@@ -110,6 +114,11 @@ def run_benchmark_hif2a_single_topology(hif2a_single_topology_leg, mode, enable_
     elif mode == "sequential":
         run = partial(run_sims_sequential, initial_states, md_params, temperature=temperature)
     elif mode == "bisection":
+        # Bisection is expected to use a slightly different initial schedule to reduce
+        # amount of minimization. The additional logic it to emulate estimate_relative_free_energy_bisection
+        lambda_grid = bisection_lambda_schedule(
+            n_windows, lambda_interval=(initial_states[0].lamb, initial_states[-1].lamb)
+        )
         # Function to be used by run_sims_bisection
         make_optimized_initial_state = partial(
             setup_optimized_initial_state,
@@ -119,16 +128,22 @@ def run_benchmark_hif2a_single_topology(hif2a_single_topology_leg, mode, enable_
             temperature=temperature,
             seed=md_params.seed,
         )
+        bisection_initial_states = [make_optimized_initial_state(lamb) for lamb in lambda_grid]
+
+        # Redefine function with new optimized initial states
+        make_optimized_initial_state = partial(
+            make_optimized_initial_state,
+            optimized_initial_states=bisection_initial_states,
+        )
+
         # Bisection is a bit different since it has to generate new windows, but still good to benchmark
         # as it is done upfront before HREX in practice
-        assert len(initial_states) >= 2
-        initial_lambdas = [initial_states[0].lamb, initial_states[-1].lamb]
         run = partial(
             run_sims_bisection,
-            initial_lambdas,
+            [initial_states[0].lamb, initial_states[-1].lamb],
             make_optimized_initial_state,
             md_params,
-            n_bisections=n_windows - len(initial_lambdas),
+            n_bisections=n_windows - 2,
             temperature=temperature,
             min_overlap=None,
             verbose=True,
