@@ -2,7 +2,7 @@
 
 import pickle
 from functools import partial
-from typing import List, Sequence, Tuple
+from typing import List, Sequence, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray as Array
@@ -23,6 +23,7 @@ from timemachine.fe.free_energy import (
 from timemachine.fe.lambda_schedule import construct_pre_optimized_absolute_lambda_schedule_solvent
 from timemachine.fe.topology import BaseTopology
 from timemachine.fe.utils import get_mol_name, get_romol_conf
+from timemachine.fe.free_energy import Trajectory
 from timemachine.ff import Forcefield
 from timemachine.ff.handlers import openmm_deserializer
 from timemachine.lib import LangevinIntegrator, MonteCarloBarostat
@@ -31,6 +32,9 @@ from timemachine.md.barostat.moves import NPTMove
 from timemachine.md.barostat.utils import get_bond_list, get_group_indices
 from timemachine.md.states import CoordsVelBox
 from timemachine.potentials import SummedPotential
+from timemachine.potentials.nonbonded import coulomb_prefactors_on_traj, DEFAULT_CHUNK_SIZE
+from timemachine.potentials.potential import BoundPotential
+from timemachine.potentials.potentials import SummedPotential, NonbondedInteractionGroup
 
 DEFAULT_AHFE_MD_PARAMS = MDParams(n_frames=1000, n_eq_steps=10_000, steps_per_frame=400, seed=2023)
 
@@ -176,6 +180,27 @@ def set_up_ahfe_system_for_smc(
     return samples, lambdas, propagate, log_prob, resample
 
 
+def replace_ahfe_summed_bp_with_new_ixn_coulomb(
+    bp: BoundPotential, 
+    ligand_idxs: Array, 
+    ligand_tm_charges: Array) -> BoundPotential:
+    """take the last (nonbonded) bound potential in the `ahfe` bps and replace ixn ligand charges with `ligand_tm_charges`"""
+    summed_potential = bp.potential
+    assert isinstance(bp.potential, SummedPotential)
+    assert isinstance(bp.potential.potentials[1], NonbondedInteractionGroup)
+    params_init = bp.potential.params_init
+    assert len(params_init) == 3
+    flat_params_init = np.concatenate([q.flatten() for q in params_init])
+    assert np.allclose(bp.params, flat_params_init)
+    
+    ixn_params = np.array(params_init[1])
+    ixn_params[ligand_idxs,0] = ligand_tm_charges
+    new_params_init = [params_init[0], ixn_params, params_init[2]]
+    new_flat_params_init = np.concatenate([q.flatten() for q in new_params_init])
+    new_bp = BoundPotential(potential = bp.potential, params = new_flat_params_init)
+    return new_bp
+
+
 def estimate_absolute_free_energy(
     mol,
     ff: Forcefield,
@@ -183,6 +208,7 @@ def estimate_absolute_free_energy(
     prefix="",
     md_params: MDParams = DEFAULT_AHFE_MD_PARAMS,
     n_windows=None,
+    ligand_tm_ixn_charges: Union[Array, None] = None,
 ):
     """
     Estimate the absolute hydration free energy for the given mol.
@@ -207,6 +233,9 @@ def estimate_absolute_free_energy(
     md_params: MDParams
         Parameters for the equilibration and production MD. Defaults to 400 global steps per frame, 1000 frames and 10k
         equilibration steps with seed 2023.
+    
+    ligand_tm_ixn_charges: Union[Array, None]
+        tm parameters (tm-like charges) for the ixn coulomb ixn, if None, reparameterization does not occur
 
     Returns
     -------
@@ -225,6 +254,14 @@ def estimate_absolute_free_energy(
 
     temperature = DEFAULT_TEMP
     initial_states = setup_initial_states(afe, ff, host_config, temperature, lambda_schedule, md_params.seed)
+    
+    if ligand_tm_ixn_charges is not None:
+        for init_state in initial_states:
+            ligand_idxs = init_state.ligand_idxs
+            last_potential = init_state.potentials[-1]
+            new_bp = replace_ahfe_summed_bp_with_new_ixn_coulomb(last_potential, ligand_idxs, ligand_tm_ixn_charges)
+            new_potentials = init_state.potentials[:-1] + [new_bp]
+            init_state.potentials = new_potentials # modify in place
 
     combined_prefix = get_mol_name(mol) + "_" + prefix
     try:
@@ -317,8 +354,33 @@ def setup_initial_states(
     return initial_states
 
 
+def ah_coulomb_prefactors_from_traj_state(initial_state: InitialState, trajectory: Trajectory, chunk_size=DEFAULT_CHUNK_SIZE):
+    """this is similar to `coulomb_prefactors_from_traj_state`, except extracts the appropriate nbf from 
+    bps generated from `AbsoluteFreeEnergy`"""
+    ligand_idxs = initial_state.ligand_idxs
+    summed_bp = initial_state.potentials[-1] # by inspection, last force is a summed force of 3 nonbonded potentials
+    water_nb_potential = summed_bp.potential.potentials[0]
+    params = summed_bp.potential.params_init[0]
+    charges = params[:,0]
+    ligand_charges = charges[ligand_idxs]
+    assert np.allclose(ligand_charges, 0.), f"ligand charges: {ligand_charges}" # all ligand idx charges should be zero
+    env_idxs = np.array([i for i in range(params.shape[0]) if i not in ligand_idxs], dtype = ligand_idxs.dtype)
+    beta, cutoff = water_nb_potential.beta, water_nb_potential.cutoff
+    frames_as_arr = np.concatenate([frame[np.newaxis, ...] for frame in trajectory.frames], axis=0)
+    boxes_as_arr = np.concatenate([box[np.newaxis, ...] for box in trajectory.boxes], axis=0)
+    prefactors = coulomb_prefactors_on_traj(traj = frames_as_arr, 
+                                        boxes = boxes_as_arr, 
+                                        charges = charges, 
+                                        ligand_indices = ligand_idxs, 
+                                        env_indices = env_idxs, 
+                                        beta=beta, 
+                                        cutoff=cutoff, 
+                                        chunk_size=chunk_size)
+    return prefactors 
+
+
 def run_solvent(
-    mol, forcefield: Forcefield, _, md_params: MDParams, n_windows=16
+    mol, forcefield: Forcefield, _, md_params: MDParams, n_windows=16, ligand_tm_ixn_charges = None
 ) -> Tuple[SimulationResult, app.topology.Topology, HostConfig]:
     box_width = 4.0
     solvent_sys, solvent_conf, solvent_box, solvent_top = builders.build_water_system(box_width, forcefield.water_ff)
@@ -331,5 +393,6 @@ def run_solvent(
         md_params=md_params,
         prefix="solvent",
         n_windows=n_windows,
+        ligand_tm_ixn_charges=ligand_tm_ixn_charges,
     )
     return solvent_res, solvent_top, solvent_host_config
