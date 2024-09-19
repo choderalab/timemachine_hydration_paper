@@ -546,7 +546,7 @@ class Wrapper:
             self.cache['grad'] = self.dict_to_flat(grad)
         else:
             self.cache['grad'] = grad.flatten()
-        print(val)
+        # print(val)
         return val
         
     def jac(self, x, *args):
