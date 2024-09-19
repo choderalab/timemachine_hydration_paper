@@ -1,8 +1,6 @@
 """utilities to refit electrostatic parameters"""
 import pickle
-import argparse
 import os
-import glob
 import torch
 import jax
 import numpy as np
@@ -329,6 +327,8 @@ def create_pads(
 def get_ahfe_joint_loss( 
     tm_ligand_charges, # tm
     hs, 
+    es, 
+    ss,
     num_pcs,
     mlp_init_params: typing.Union[typing.Tuple[int], None], # if mlp, (num_features, num_layers)
     ):
@@ -340,7 +340,7 @@ def get_ahfe_joint_loss(
         model_params = model.init(DEFAULT_NN_KEY, jnp.zeros(num_pcs))
     else:
         model = None
-        model_params = jnp.ones((2, num_pcs)) * 1e-6
+        model_params = jnp.ones((2, num_pcs)) * 1e-6 # make init params small to as to start ~0 perturbation.
 
     pc_vals, pc_vecs = embedding_pca(jnp.vstack(hs)) # compute pcs
     pc_vecs = jnp.transpose(pc_vecs)[:num_pcs]
@@ -428,6 +428,8 @@ class Wrapper:
         orig_calc_ddgs: jax.Array, 
         tm_ligand_charges: jax.Array, # tm
         hs: jax.Array, 
+        es: jax.Array,
+        ss: jax.Array,
         num_pcs: jax.Array,
         mlp_init_params: typing.Union[typing.Tuple[int], None], # use (2,1) as default (2 features, 1 layer)
         retrieve_by_descent: bool,
@@ -463,7 +465,7 @@ class Wrapper:
             self.orig_us, 
             self.loss_fn, 
             self.model_params
-        ) = get_ahfe_joint_loss(self.tm_ligand_charges, self.hs, self.num_pcs, mlp_init_params)
+        ) = get_ahfe_joint_loss(self.tm_ligand_charges, self.hs, es, ss, self.num_pcs, mlp_init_params)
 
         # handle flattening.
         if mlp_init_params:
