@@ -19,6 +19,7 @@ from openff.toolkit.topology import Molecule
 # specific tm stuff
 from timemachine.fe.reweighting import one_sided_exp
 from timemachine.md.smc import effective_sample_size
+from timemachine.fe.utils import get_mol_name
 from timemachine.constants import BOLTZ, DEFAULT_TEMP, KCAL_TO_KJ, ONE_4PI_EPS0
 
 # constants
