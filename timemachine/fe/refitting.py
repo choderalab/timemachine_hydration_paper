@@ -329,6 +329,7 @@ def get_ahfe_joint_loss(
     hs, 
     es, 
     ss,
+    prefactors,
     num_pcs,
     mlp_init_params: typing.Union[typing.Tuple[int], None], # if mlp, (num_features, num_layers)
     ):
@@ -427,10 +428,11 @@ class Wrapper:
         orig_calc_dgs: jax.Array,
         orig_calc_ddgs: jax.Array, 
         tm_ligand_charges: jax.Array, # tm
-        hs: jax.Array, 
-        es: jax.Array,
-        ss: jax.Array,
-        num_pcs: jax.Array,
+        hs: typing.List[jax.Array], 
+        es: typing.List[jax.Array],
+        ss: typing.List[jax.Array],
+        prefactors: typing.List[jax.Array],
+        num_pcs: int,
         mlp_init_params: typing.Union[typing.Tuple[int], None], # use (2,1) as default (2 features, 1 layer)
         retrieve_by_descent: bool,
         retrieval_seed: float,
@@ -465,7 +467,7 @@ class Wrapper:
             self.orig_us, 
             self.loss_fn, 
             self.model_params
-        ) = get_ahfe_joint_loss(self.tm_ligand_charges, self.hs, es, ss, self.num_pcs, mlp_init_params)
+        ) = get_ahfe_joint_loss(self.tm_ligand_charges, self.hs, es, ss, prefactors, self.num_pcs, mlp_init_params)
 
         # handle flattening.
         if mlp_init_params:
