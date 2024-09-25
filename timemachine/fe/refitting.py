@@ -310,16 +310,16 @@ def dg_loss_aux(exp_dg, orig_calc_dg, orig_calc_ddg, orig_us, prefactors, es, ss
         pert_us, orig_us, orig_calc_dg, orig_calc_ddg, exp_dg, loss_fn)
     return loss, (ESS, delta_us, reweighted_solv_dg, reweighted_solv_ddg, ligand_tm_charges, orig_es_ss, mod_es_ss)
 
-def create_pads(
-    es, ss, hs, prefactors, ligand_charges):
+def create_pads(es, ss, hs, prefactors, ligand_charges):
     """return es, ss, prefactors, tm_ligand_charges as list of different shaped arrs
     with appropriate pads"""
+    max_frames = max([len(p) for p in prefactors])
     max_num_atoms = max([len(e) for e in es])
     pad_es = [np.pad(e, ((0,max_num_atoms - len(e)),), mode='constant', constant_values=ELECTRONEGATIVITY_PAD) for e in es]
     pad_ss = [np.pad(s, ((0,max_num_atoms - len(s)),), mode='constant', constant_values=HARDNESS_PAD) for s in ss]
     pad_hs = [np.pad(h, ((0,max_num_atoms - len(h)),(0,0)), mode='constant', constant_values=EMBED_PAD) for h in hs]
     pad_ligand_charges = [np.pad(q, ((0,max_num_atoms - len(q)),), mode='constant', constant_values=0.) for q in ligand_charges]
-    pad_prefactors = [np.pad(p, ((0,0), (0,max_num_atoms - p.shape[1])), mode='constant', constant_values=0.) for p in prefactors]
+    pad_prefactors = [np.pad(p, ((0,max_frames - len(p)), (0,max_num_atoms - p.shape[1])), mode='constant', constant_values=0.) for p in prefactors]
     return jnp.array(pad_es), jnp.array(pad_ss), jnp.array(pad_hs), jnp.array(pad_prefactors), jnp.array(pad_ligand_charges)
 
 
