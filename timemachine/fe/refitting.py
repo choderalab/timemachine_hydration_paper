@@ -169,6 +169,30 @@ def abs_dg_reweighting_zwanzig(
     return solvent_reweighting_estimator, (ESS, solvent_reweighting_error, solv_delta_us_lambda1)
 
 
+def rel_dg_reweighting_zwanzig(
+    solv_pert_us: jax.Array, # solvent perturbed (reduced) potentials
+    comp_pert_us: jax.Array, # complex perturbed (reduced) potentials
+    solv_orig_us: jax.Array, # solvent unperturbed (reduced) potentials
+    comp_orig_us: jax.Array, # complex unperturbed (reduced) potentials
+    base_dg: float, # free energy difference complex less solvent
+    base_ddg: float, # `base_dg` error
+) -> typing.Tuple[float, typing.Tuple[typing.Any]]:
+    """similar to `abs_dg_reweighting_zwanzig`, except handles relative binding free energies"""
+    comp_delta_us = comp_pert_us - comp_orig_us
+    solv_delta_us = solv_pert_us - solv_orig_us
+    
+    comp_ESS = ESS_from_delta_us(comp_delta_us)
+    solv_ESS = ESS_from_delta_us(solv_delta_us)
+
+    reweighting_estimator, reweighting_error = exp_reweighting_estimator(
+        delta_f_base = base_dg,
+        delta_us_at_lam0 = solv_delta_us,
+        delta_us_at_lamneg1 = comp_delta_us,
+        err_delta_f_base = base_ddg)
+
+    return reweighting_estimator, (solv_ESS, comp_ESS, reweighting_error, solv_delta_us, comp_delta_us)
+
+
 def dg_l1_loss(r):
     return jnp.linalg.norm(r)
 
@@ -185,6 +209,14 @@ def abs_dg_zwanzig_loss(pert_us, orig_us, solv_base_dg, solv_base_ddg, exp_dg, l
     reweighted_solv_dg, (ESS, reweighted_solv_ddg, delta_us) = abs_dg_reweighting_zwanzig(pert_us, orig_us, solv_base_dg, solv_base_ddg)
     loss = loss_fn(reweighted_solv_dg - exp_dg)
     return loss, (ESS, delta_us, reweighted_solv_dg, reweighted_solv_ddg)
+
+
+def rel_dg_zwanzig_loss(solv_pert_us, comp_pert_us, solv_orig_us, comp_orig_us, base_dg, base_ddg, exp_dg, loss_fn):
+    """see `rel_dg_reweighting_zwanzig`; is same as `abs_dg_zwanzig_loss` except uses complex and solvent phases"""
+    reweighting_dg, (solv_ESS, comp_ESS, reweighting_ddg, solv_delta_us, comp_delta_us) = rel_dg_reweighting_zwanzig(
+        solv_pert_us, comp_pert_us, solv_orig_us, comp_orig_us, base_dg, base_ddg)
+    loss = loss_fn(reweighting_estimator - exp_dg)
+    return loss, (solv_ESS, comp_ESS, solv_delta_us, comp_delta_us, reweighting_dg, reweighting_ddg)
 
 
 # electrostatic parameterization/energy eval utils
@@ -294,14 +326,41 @@ def abs_nESSs_penalty(nESS, nESS_frac_threshold: float, nESS_coeff: float):
     return jax.lax.select(nESS_diff < 0., nESS_coeff * nESS_diff**2, nESS_diff * 0.)
 
 
+def rel_nESSs_penalty(
+    solv_nESS: float, comp_nESS: float,
+    nESS_frac_threshold: int, 
+    nESS_coeff: float) -> float:
+    """see `abs_nESSs_penalty`; note that this might have to be 
+    variable upon each call with diff numbers of frames"""
+    solv_penalty = abs_nESSs_penalty(solv_nESS, nESS_frac_threshold, nESS_coeff)
+    comp_penalty = abs_nESSs_penalty(comp_nESS, nESS_frac_threshold, nESS_coeff)
+    return solv_penalty + comp_penalty
+
+
 def elec_hard_pert_penalty(orig_es_ss: jax.Array, mod_es_ss: jax.Array, e_coeff: float, s_coeff: float):
     """penalize deviations of the electronegativity and hardnesses from original params with a quadratic term"""
     diffs = orig_es_ss - mod_es_ss
     square_diffs = diffs**2
     return e_coeff * jnp.mean(square_diffs[0,:]) + s_coeff * jnp.mean(square_diffs[1,:])
 
-def dg_loss_aux(exp_dg, orig_calc_dg, orig_calc_ddg, orig_us, prefactors, es, ss, hs, 
-            total_charge, pc_vecs, params, eps, e_scale, s_scale, model, loss_fn):
+def ahfe_dg_loss_aux(
+    exp_dg: float, 
+    orig_calc_dg: float, 
+    orig_calc_ddg: float, 
+    orig_us: jax.Array, 
+    prefactors: jax.Array, 
+    es: jax.Array, 
+    ss: jax.Array, 
+    hs: jax.Array, 
+    total_charge: float, 
+    pc_vecs: jax.Array, 
+    params: typing.Union[typing.Dict, jax.Array], 
+    eps: float, 
+    e_scale: float,
+    s_scale: float, 
+    model: typing.Union[MLP, None], 
+    loss_fn: typing.Callable):
+    """combine parameterization, pert_us calc, and loss for ahfes"""
     orig_params = jnp.concatenate([es[..., jnp.newaxis], ss[..., jnp.newaxis]], axis=-1)
     ligand_tm_charges, (orig_es_ss, mod_es_ss) = compute_charges(
         hs, params, orig_params, total_charge, eps, pc_vecs, e_scale, s_scale, model)
@@ -310,27 +369,49 @@ def dg_loss_aux(exp_dg, orig_calc_dg, orig_calc_ddg, orig_us, prefactors, es, ss
         pert_us, orig_us, orig_calc_dg, orig_calc_ddg, exp_dg, loss_fn)
     return loss, (ESS, delta_us, reweighted_solv_dg, reweighted_solv_ddg, ligand_tm_charges, orig_es_ss, mod_es_ss)
 
+
+def bfe_dg_loss_aux(
+    exp_dg, orig_calc_dg, orig_calc_ddg, 
+    solv_orig_us, comp_orig_us, 
+    solv_prefactors, comp_prefactors, 
+    es, ss, hs, total_charge, pc_vecs, params, eps, 
+    e_scale, s_scale, model, loss_fn):
+    """same as `ahfe_dg_loss_aux` except for binding free energies; hence, requires separate phase information.
+    TODO: combine this with `ahfe_dg_loss_aux` to reduce (albeit minimal) code duplication.
+    NOTE: combining is not trivial since if/else statements are not jitable and are not immediately partialed out in the wrapper pipeline
+    """
+    orig_params = jnp.concatenate([es[..., jnp.newaxis], ss[..., jnp.newaxis]], axis=-1)
+    ligand_tm_charges, (orig_es_ss, mod_es_ss) = compute_charges(
+        hs, params, orig_params, total_charge, eps, pc_vecs, e_scale, s_scale, model)
+    solv_pert_us = U_ligand_env(ligand_tm_charges, solv_prefactors) * BETA
+    comp_pert_us = U_ligand_env(ligand_tm_charges, comp_prefactors) * BETA
+    loss, (solv_ESS, comp_ESS, solv_delta_us, comp_delta_us, reweighting_dg, reweighting_ddg) = rel_dg_zwanzig_loss(
+        solv_pert_us, comp_pert_us, solv_orig_us, comp_orig_us, orig_calc_dg, orig_calc_ddg, exp_dg, loss_fn)
+    return loss, (solv_ESS, comp_ESS, solv_delta_us, comp_delta_us, reweighting_dg, reweighting_ddg, ligand_tm_charges, orig_es_ss, mod_es_ss)
+
+
 def create_pads(es, ss, hs, prefactors, ligand_charges):
     """return es, ss, prefactors, tm_ligand_charges as list of different shaped arrs
     with appropriate pads"""
-    max_frames = max([len(p) for p in prefactors])
+    n_frames = np.array([len(p) for p in prefactors])
+    consistent_frames = np.allclose(n_frames, n_frames[0])
+
     max_num_atoms = max([len(e) for e in es])
     pad_es = [np.pad(e, ((0,max_num_atoms - len(e)),), mode='constant', constant_values=ELECTRONEGATIVITY_PAD) for e in es]
     pad_ss = [np.pad(s, ((0,max_num_atoms - len(s)),), mode='constant', constant_values=HARDNESS_PAD) for s in ss]
     pad_hs = [np.pad(h, ((0,max_num_atoms - len(h)),(0,0)), mode='constant', constant_values=EMBED_PAD) for h in hs]
     pad_ligand_charges = [np.pad(q, ((0,max_num_atoms - len(q)),), mode='constant', constant_values=0.) for q in ligand_charges]
-    pad_prefactors = [np.pad(p, ((0,max_frames - len(p)), (0,max_num_atoms - p.shape[1])), mode='constant', constant_values=0.) for p in prefactors]
-    return jnp.array(pad_es), jnp.array(pad_ss), jnp.array(pad_hs), jnp.array(pad_prefactors), jnp.array(pad_ligand_charges)
+    pad_prefactors = [np.pad(p, ((0,0), (0,max_num_atoms - p.shape[1])), mode='constant', constant_values=0.) for p in prefactors]
+    if consistent_frames:
+        out_prefactors = jnp.array(pad_prefactors)
+    else:
+        out_prefactors = [jnp.array(p) for p in pad_prefactors]
+    return jnp.array(pad_es), jnp.array(pad_ss), jnp.array(pad_hs), out_prefactors, jnp.array(pad_ligand_charges)
 
 
 # ahfe loss fn
 def get_ahfe_joint_loss( 
-    tm_ligand_charges, # tm
-    hs, 
-    es, 
-    ss,
-    prefactors,
-    num_pcs,
+    tm_ligand_charges, hs, es, ss, prefactors, num_pcs, 
     mlp_init_params: typing.Union[typing.Tuple[int], None], # if mlp, (num_features, num_layers)
     ):
     """given experimental dgs, calculated dgs, prefactors (at lambda 1), ligand charges (in tm),
@@ -350,10 +431,11 @@ def get_ahfe_joint_loss(
     e_scale, s_scale = np.std(np.concatenate(es).flatten()), np.std(np.concatenate(ss).flatten())
     
     pad_es, pad_ss, pad_hs, pad_prefactors, pad_ligand_charges = create_pads(es, ss, hs, prefactors, ligand_charges)
+    assert type(pad_prefactors) == type(pad_es), f"for ahfes, prefactors must be jax arrays; i.e. they must have the same number of frames" # TODO: do not require this.
     orig_us = jax.vmap(U_ligand_env, in_axes=(0,0))(
         pad_ligand_charges * np.sqrt(ONE_4PI_EPS0), pad_prefactors) * BETA # back to tm_ligand charges, and reduce potential energy
     dg_loss_fn = functools.partial(
-        dg_loss_aux, model = model, loss_fn = dg_pseudo_huber_loss) # partial dg loss fn
+        ahfe_dg_loss_aux, model = model, loss_fn = dg_pseudo_huber_loss) # partial dg loss fn
 
     def total_loss_fn(
         exp_dg, orig_calc_dg, orig_calc_ddg, orig_us, prefactors, es, ss, 
@@ -365,6 +447,58 @@ def get_ahfe_joint_loss(
         nESS_loss = abs_nESSs_penalty(ESS, nESS_frac_threshold, nESS_coeff)
         return dg_loss*dg_loss_weight, nESS_loss, (ESS, delta_us, orig_calc_dg, reweighted_solv_dg, reweighted_solv_ddg, exp_dg, ligand_tm_charges, orig_es_ss, mod_es_ss)
     return pc_vals, pc_vecs, pad_es, pad_ss, pad_hs, pad_prefactors, pad_ligand_charges, e_scale, s_scale, orig_us, total_loss_fn, model_params
+
+def get_ahfe_bfe_joint_loss(
+    tm_ahfe_ligand_charges,
+    tm_bfe_ligand_charges,
+    ahfe_hs, bfe_hs, 
+    ahfe_es, bfe_es,
+    ahfe_ss, bfe_ss,
+    ahfe_prefactors, bfe_solv_prefactors, bfe_comp_prefactors, 
+    num_pcs, mlp_init_params):
+    """similar to `get_ahfe_joint_loss` except uses ahfe pcs and vecs to embed bfe data;
+    uses a consistent parameterization scheme for both ahfe and bfe data"""
+    # retrieve the number of prefactors in bfes; compute nESSs for each edge
+    n_frames_solv = np.array([len(q) for q in bfe_solv_prefactors])
+    n_frames_comp = np.array([len(q) for q in bfe_comp_prefactors])
+    assert np.array_equal(n_frames_solv, n_frames_comp) # the number of frames should be consistent between phases
+
+    # retrieve ahfe loss fns first
+    (pc_vals, pc_vecs, pad_ahfe_es, pad_ahfe_ss, pad_ahfe_hs, pad_ahfe_prefactors, 
+    pad_ahfe_ligand_charges, e_scale, s_scale, ahfe_orig_us, ahfe_total_loss_fn, model_params
+    ) =  get_ahfe_joint_loss(tm_ahfe_ligand_charges, ahfe_hs, ahfe_es, ahfe_ss, ahfe_prefactors, num_pcs, mlp_init_params)
+
+    # now for bfe
+    bfe_ligand_charges = [mol_tm_charges / jnp.sqrt(ONE_4PI_EPS0) for mol_tm_charges in tm_bfe_ligand_charges] # convert tm ligand charges back
+    pad_bfe_es, pad_bfe_ss, pad_bfe_hs, pad_bfe_solv_prefactors, pad_bfe_ligand_charges = create_pads(bfe_es, bfe_ss, bfe_hs, bfe_solv_prefactors, bfe_ligand_charges)
+    _, _, _, pad_bfe_comp_prefactors, _ = create_pads(bfe_es, bfe_ss, bfe_hs, bfe_comp_prefactors, bfe_ligand_charges)
+    consistent_n_frames = type(pad_bfe_es) == type(pad_bfe_comp_prefactors) # determine whether the number of frames is consistent
+    if consistent_n_frames: # we can just vmap on leading axes
+        solv_orig_us = jax.vmap(U_ligand_env, in_axes=(0,0))(pad_bfe_ligand_charges * np.sqrt(ONE_4PI_EPS0), pad_bfe_solv_prefactors) * BETA
+        comp_orig_us = jax.vmap(U_ligand_env, in_axes=(0,0))(pad_bfe_ligand_charges * np.sqrt(ONE_4PI_EPS0), pad_bfe_comp_prefactors) * BETA
+    else: # need to for loop across solv/comp prefactors because it is a list (ugh)
+        solv_orig_us = [U_ligand_env(c*np.sqrt(ONE_4PI_EPS0), p) for c, p in zip(pad_bfe_ligand_charges, pad_bfe_solv_prefactors)]
+        comp_orig_us = [U_ligand_env(c*np.sqrt(ONE_4PI_EPS0), p) for c, p in zip(pad_bfe_ligand_charges, pad_bfe_comp_prefactors)]
+
+    dg_loss_fn = functools.partial(bfe_dg_loss_aux, model = model, loss_fn = dg_pseudo_huber_loss) # partial dg loss fn
+
+    def bfe_total_loss_fn(
+        exp_dg, orig_calc_dg, orig_calc_ddg, solv_orig_us, comp_orig_us, solv_prefactors, comp_prefactors, 
+        es, ss, hs, pad_ligand_charges, pc_vecs, params, eps, e_scale, s_scale, ESS_threshold, nESS_coeff, dg_loss_weight):
+        """if the number of frames is variable, specify a non-fractional threshold and get `nESS_frac_threshold` by dividing by num frames"""
+        total_charge = pad_ligand_charges.sum()
+        n_frames = solv_prefactors.shape[0]
+        nESS_frac_threshold = ESS_threshold / n_frames
+        dg_loss, (solv_nESS, comp_nESS, solv_delta_us, comp_delta_us, reweighting_dg, reweighting_ddg, ligand_tm_charges, orig_es_ss, mod_es_ss) = dg_loss_fn(
+                exp_dg, orig_calc_dg, orig_calc_ddg, solv_orig_us, comp_orig_us, solv_prefactors, comp_prefactors, 
+                es, ss, hs, total_charge, pc_vecs, params, eps, e_scale, s_scale)
+        solv_nESS_loss = abs_nESSs_penalty(solv_nESS, nESS_frac_threshold, nESS_coeff)
+        comp_nESS_loss = abs_nESSs_penalty(comp_nESS, nESS_frac_threshold, nESS_coeff)
+        nESS_loss = solv_nESS_loss + comp_nESS_loss
+        aux = (solv_nESS, comp_nESS, solv_delta_us, comp_delta_us, 
+        orig_calc_dg, reweighting_dg, reweighting_ddg, exp_dg, ligand_tm_charges, orig_es_ss, mod_es_ss)
+        return dg_loss*dg_loss_weight, nESS_loss, aux
+    
 
 
 # train/test retrieval utils
