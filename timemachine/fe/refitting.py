@@ -554,6 +554,21 @@ def reshape_from_template(flat_array, template_list):
     return reshaped_arrays
 
 
+# empirical percentile for early stopping
+def compute_95_ci_ecdf(x):
+    # Convert input to a numpy array (in case it's not already)
+    x = np.array(x)
+    
+    # Sort the data
+    x_sorted = np.sort(x)
+    
+    # Compute the left and right 2.5% bounds (which give the 95% CI)
+    lower_bound = np.percentile(x_sorted, 2.5)
+    upper_bound = np.percentile(x_sorted, 97.5)
+    
+    return lower_bound, upper_bound
+
+
 # training wrapper
 class Wrapper:
     def __init__(
@@ -571,6 +586,7 @@ class Wrapper:
         retrieve_by_descent: bool,
         retrieval_seed: float,
         train_fraction: float,
+        test_fraction: float,
         nESS_frac_threshold: float,
         nESS_coeff: float,
         nESS_on_test: bool = False,
@@ -584,7 +600,9 @@ class Wrapper:
         self.retrieve_by_descent = retrieve_by_descent
         self.retrieval_seed = retrieval_seed
         self.train_fraction = train_fraction
-        self.test_fraction = 1. - self.train_fraction
+        self.test_fraction = test_fraction
+        self.validate_fraction = 1. - (self.train_fraction + self.test_fraction)
+        assert self.validate_fraction < self.test_fraction # this is required at present; TODO: fix this constraint
         self.nESS_frac_threshold = nESS_frac_threshold
         self.nESS_coeff = nESS_coeff
         self.nESS_on_test = nESS_on_test
@@ -614,9 +632,13 @@ class Wrapper:
             self.flat_params = self.model_params.flatten()
         
 
-        (self.train_idxs, self.test_idxs) = self.split_train_test()
-        (self.train_loss_fn, self.test_losses_fn) = self.get_loss_fn()
-        self.cache = {}
+        (self.train_idxs, self.test_idxs, self.validate_idxs) = self.split_train_test()
+        (self.train_loss_fn, self.test_losses_fn, self.validate_losses_fn) = self.get_loss_fn()
+        self.cache = {
+            'validate_min_mean_loss': 1e6, 
+            'validate_min_mean_loss_params': self.flat_params,
+            'early_stop': False,
+            } # initialize validation loss and loss params
         
 
     def split_train_test(self):
@@ -627,7 +649,19 @@ class Wrapper:
             train_idxs = generate_sequence(self.retrieval_seed, 0, len(self.exp_dgs)-1, num)
             all_idxs = jnp.arange(len(self.exp_dgs))
             test_idxs = jnp.array([q for q in all_idxs if q not in train_idxs])
-        return train_idxs, test_idxs    
+        
+        # then pull validate from test fraction fraction if > 0.
+        if self.validate_fraction > 0:
+            num_datapoints = len(train_idxs) + len(test_idxs)
+            num_validate_datapoints = int(self.validate_fraction * num_datapoints)
+            _, validate_seed = jax.random.split(self.retrieval_seed, num=2)
+            validate_idxs = jax.random.choice(
+                validate_seed, test_idxs, shape=(num_validate_datapoints,), replace=False)
+            test_idxs = jnp.array([q for q in test_idxs if q not in validate_idxs]) # remove validate idxs from test
+        else:
+            validate_idxs = None
+
+        return train_idxs, test_idxs, validate_idxs    
 
     def get_loss_fn(self):
         # exp_dg, orig_calc_dg, orig_us, prefactors, es, ss, 
@@ -657,8 +691,17 @@ class Wrapper:
             loss_vals, auxs = _loss_fn(
                 params, jnp.ones(self.test_idxs.shape, dtype=jnp.float64), self.test_idxs)
             return loss_vals, auxs
-
-        return jax.jit(train_loss), jax.jit(test_losses)
+        
+        if self.validate_idxs is not None:
+            def validate_losses(params):
+                loss_vals, auxs = _loss_fn(
+                    params, jnp.ones(self.validate_idxs.shape, dtype=jnp.float64), self.validate_idxs)
+                return loss_vals, auxs
+            out_validate_fn = jax.jit(validate_losses)
+        else:
+            validate_losses = None
+            out_validate_fn = None
+        return jax.jit(train_loss), jax.jit(test_losses), out_validate_fn
 
     def flat_to_dict(self, flat_params):
         list_params = reshape_from_template(flat_params, self.params_list)
@@ -685,3 +728,26 @@ class Wrapper:
         
     def jac(self, x, *args):
         return self.cache.pop('grad')
+    
+    def validate_callback(self, x, *args):
+        """use a validation callback for early stopping"""
+        if self.params_as_dict:
+            params = self.flat_to_dict(flat_params)
+        else:
+            params = flat_params.reshape(*self.model_params.shape)
+        
+        vals, aux_data = self.validate_losses_fn(params)
+        mean_val = np.mean(vals)
+        lower_bound, upper_bound = compute_95_ci_ecdf(vals)
+        cached_mean_val = self.cache['validate_min_mean_loss']
+        if mean_val < cached_mean_val: # update 'validate_min_mean_loss' and params
+            self.cache['validate_min_mean_loss'] = mean_val
+            self.cache['validate_min_mean_loss_params'] = x
+        elif mean_val > upper_bound: # not inside 95% CI
+            self.cache['early_stop'] = True
+            raise ValueError(
+                f"mean validate loss of {mean_val} is larger than upper CI of {upper_bound}; Terminating...")
+        else:
+            # the mean val is somewhere between upper bound and the min historical validate loss
+            # this is the pad zone. pass
+            pass
