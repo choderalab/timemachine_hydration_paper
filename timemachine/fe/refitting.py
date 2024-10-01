@@ -638,6 +638,7 @@ class Wrapper:
             'validate_min_mean_loss': 1e6, 
             'validate_min_mean_loss_params': self.flat_params,
             'early_stop': False,
+            'validate_mean_loss_t': [], 
             } # initialize validation loss and loss params
         
 
@@ -740,6 +741,7 @@ class Wrapper:
         mean_val = np.mean(vals)
         lower_bound, upper_bound = compute_95_ci_ecdf(vals)
         cached_mean_val = self.cache['validate_min_mean_loss']
+        self.cache['validate_mean_loss_t'].append(mean_val)
         if mean_val < cached_mean_val: # update 'validate_min_mean_loss' and params
             self.cache['validate_min_mean_loss'] = mean_val
             self.cache['validate_min_mean_loss_params'] = x
