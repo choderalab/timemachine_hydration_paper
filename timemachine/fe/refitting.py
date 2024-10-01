@@ -634,7 +634,6 @@ class Wrapper:
 
         (self.train_idxs, self.test_idxs, self.validate_idxs) = self.split_train_test()
         (self.train_loss_fn, self.test_losses_fn, self.validate_losses_fn) = self.get_loss_fn()
-        self.vmap_validate_losses_fn = jax.jit(jax.vmap(self.validate_losses_fn))
         self.cache = {
             'validate_min_mean_loss': 1e6, 
             'validate_min_mean_loss_params': self.flat_params,
@@ -669,36 +668,45 @@ class Wrapper:
         # exp_dg, orig_calc_dg, orig_us, prefactors, es, ss, 
         # hs, pad_ligand_charges, pc_vecs, params, eps, e_scale, s_scale, nESS_frac_threshold, nESS_coeff, dg_loss_weight)
         vloss_fn = jax.vmap(self.loss_fn, in_axes=(0,0,0,0,0,0,0,0,0,None,None,None,None,None,None,None,0))
-        def _loss_fn(params, dg_loss_weight, idxs):
-            dg_losses, nESS_losses, auxs = vloss_fn(
+        def __loss_fn(params, dg_loss_weight, idxs):
+                dg_losses, nESS_losses, auxs = vloss_fn(
                 self.exp_dgs[idxs], self.orig_calc_dgs[idxs], self.orig_calc_ddgs[idxs], self.orig_us[idxs], self.pad_prefactors[idxs],
                 self.pad_es[idxs], self.pad_ss[idxs], self.pad_hs[idxs], self.pad_ligand_charges[idxs],
                 self.pc_vecs, params, 1e-8, self.e_scale, self.s_scale, self.nESS_frac_threshold, self.nESS_coeff, dg_loss_weight)
+                return dg_losses, nESS_losses, auxs
+        def _loss_fn(params, dg_loss_weight, idxs):
+            dg_losses, nESS_losses, auxs = __loss_fn(params, dg_loss_weight, idxs)
             return jnp.mean(dg_losses) + jnp.sum(nESS_losses), auxs
+        
         if self.nESS_on_test: # need to run twice 
             def train_loss(params):
-                train_loss_vals, train_loss_auxs = _loss_fn(
+                train_loss_val, train_loss_auxs = _loss_fn(
                     params, jnp.ones(self.train_idxs.shape, dtype=jnp.float64), self.train_idxs)
-                test_loss_vals, test_loss_auxs = _loss_fn(
+                test_loss_val, test_loss_auxs = _loss_fn(
                     params, jnp.zeros(self.test_idxs.shape, dtype=jnp.float64), self.test_idxs
                 )
-                return jnp.mean(train_loss_vals) + jnp.mean(test_loss_vals), train_loss_auxs
+                if self.validate_idxs is not None:
+                    validate_loss_val, validate_loss_auxs = _loss_fn(
+                    params, jnp.zeros(self.validate_idxs.shape, dtype=jnp.float64), self.validate_idxs)
+                else:
+                    validate_loss_val = 0.
+                return train_loss_vals + test_loss_val + validate_loss_val, train_loss_auxs
         else:
             def train_loss(params):
-                train_loss_vals, train_loss_auxs = _loss_fn(
+                train_loss_val, train_loss_auxs = _loss_fn(
                     params, jnp.ones(self.train_idxs.shape, dtype=jnp.float64), self.train_idxs)
-                return jnp.mean(train_loss_vals), train_loss_auxs
+                return train_loss_val, train_loss_auxs
                 
         def test_losses(params):
-            loss_vals, auxs = _loss_fn(
+            loss_val, auxs = _loss_fn(
                 params, jnp.ones(self.test_idxs.shape, dtype=jnp.float64), self.test_idxs)
-            return loss_vals, auxs
+            return loss_val, auxs
         
         if self.validate_idxs is not None:
             def validate_losses(params):
-                loss_vals, auxs = _loss_fn(
+                dg_losses, nESS_losses, auxs = __loss_fn(
                     params, jnp.ones(self.validate_idxs.shape, dtype=jnp.float64), self.validate_idxs)
-                return loss_vals, auxs
+                return dg_losses, nESS_losses, auxs
             out_validate_fn = jax.jit(validate_losses)
         else:
             validate_losses = None
@@ -741,7 +749,8 @@ class Wrapper:
         else:
             params = flat_params.reshape(*self.model_params.shape)
         
-        vals, aux_data = self.vmap_validate_losses_fn(params)
+        dg_losses, nESS_losses, auxs = self.validate_losses_fn(params)
+        vals = dg_losses + jnp.sum(nESS_losses)
         mean_val = np.mean(vals)
         lower_bound, upper_bound = compute_95_ci_ecdf(vals)
         cached_mean_val = self.cache['validate_min_mean_loss']
