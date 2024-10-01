@@ -730,7 +730,7 @@ class Wrapper:
     def jac(self, x, *args):
         return self.cache.pop('grad')
     
-    def validate_callback(self, x, *args):
+    def validate_callback(self, flat_params, *args):
         """use a validation callback for early stopping"""
         if self.params_as_dict:
             params = self.flat_to_dict(flat_params)
@@ -744,7 +744,7 @@ class Wrapper:
         self.cache['validate_mean_loss_t'].append(mean_val)
         if mean_val < cached_mean_val: # update 'validate_min_mean_loss' and params
             self.cache['validate_min_mean_loss'] = mean_val
-            self.cache['validate_min_mean_loss_params'] = x
+            self.cache['validate_min_mean_loss_params'] = flat_params
         elif mean_val > upper_bound: # not inside 95% CI
             self.cache['early_stop'] = True
             raise ValueError(
