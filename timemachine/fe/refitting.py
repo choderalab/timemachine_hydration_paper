@@ -636,9 +636,10 @@ class Wrapper:
         (self.train_loss_fn, self.test_losses_fn, self.validate_losses_fn) = self.get_loss_fn()
         self.cache = {
             'validate_min_mean_loss': 1e6, 
-            'validate_min_mean_loss_params': self.flat_params,
+            'validate_min_mean_loss_params': self.model_params,
             'early_stop': False,
             'validate_mean_loss_t': [], 
+            'validate_loss_bounds_t': [],
             } # initialize validation loss and loss params
         
 
@@ -733,7 +734,6 @@ class Wrapper:
             self.cache['grad'] = self.dict_to_flat(grad)
         else:
             self.cache['grad'] = grad.flatten()
-        # print(val)
         return val
         
     def jac(self, x, *args):
@@ -755,9 +755,10 @@ class Wrapper:
         lower_bound, upper_bound = compute_95_ci_ecdf(vals)
         cached_mean_val = self.cache['validate_min_mean_loss']
         self.cache['validate_mean_loss_t'].append(mean_val)
+        self.cache['validate_loss_bounds_t'].append([lower_bound, upper_bound])
         if mean_val < cached_mean_val: # update 'validate_min_mean_loss' and params
             self.cache['validate_min_mean_loss'] = mean_val
-            self.cache['validate_min_mean_loss_params'] = flat_params
+            self.cache['validate_min_mean_loss_params'] = params
         elif mean_val > upper_bound: # not inside 95% CI
             self.cache['early_stop'] = True
             raise ValueError(
