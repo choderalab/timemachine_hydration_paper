@@ -634,6 +634,7 @@ class Wrapper:
 
         (self.train_idxs, self.test_idxs, self.validate_idxs) = self.split_train_test()
         (self.train_loss_fn, self.test_losses_fn, self.validate_losses_fn) = self.get_loss_fn()
+        self.vmap_validate_losses_fn = jax.jit(jax.vmap(self.validate_losses_fn))
         self.cache = {
             'validate_min_mean_loss': 1e6, 
             'validate_min_mean_loss_params': self.flat_params,
@@ -732,12 +733,15 @@ class Wrapper:
     
     def validate_callback(self, flat_params, *args):
         """use a validation callback for early stopping"""
+        if self.validate_losses_fn is None:
+            raise ValueError(f"`self.validate_losses_fn` is None; there are no reserved validation idxs")
+
         if self.params_as_dict:
             params = self.flat_to_dict(flat_params)
         else:
             params = flat_params.reshape(*self.model_params.shape)
         
-        vals, aux_data = self.validate_losses_fn(params)
+        vals, aux_data = self.vmap_validate_losses_fn(params)
         mean_val = np.mean(vals)
         lower_bound, upper_bound = compute_95_ci_ecdf(vals)
         cached_mean_val = self.cache['validate_min_mean_loss']
