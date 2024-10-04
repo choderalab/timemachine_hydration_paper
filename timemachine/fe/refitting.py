@@ -571,6 +571,11 @@ def compute_95_ci_ecdf(x):
 
 # training wrapper
 class Wrapper:
+    """wrapper class for `scipy.optimize.minimize`;
+
+    NOTE: this is getting a bit cumbersome and might be worth subclassing from a `Base` if more experimental
+    settings are necessary
+    """
     def __init__(
         self,
         exp_dgs: jax.Array,
@@ -581,6 +586,7 @@ class Wrapper:
         es: typing.List[jax.Array],
         ss: typing.List[jax.Array],
         prefactors: typing.List[jax.Array],
+        use_pca: bool,
         num_pcs: int,
         mlp_init_params: typing.Union[typing.Tuple[int], None], # use (2,1) as default (2 features, 1 layer)
         retrieve_by_descent: bool,
@@ -596,7 +602,9 @@ class Wrapper:
         self.orig_calc_ddgs = orig_calc_ddgs
         self.tm_ligand_charges = tm_ligand_charges
         self.hs = hs
+        self.use_pca = use_pca
         self.num_pcs = num_pcs
+        if not self.use_pca: assert self.num_pcs == EMBED_DIM # full rank pcs are requred if not using pca
         self.retrieve_by_descent = retrieve_by_descent
         self.retrieval_seed = retrieval_seed
         self.train_fraction = train_fraction
@@ -620,6 +628,9 @@ class Wrapper:
             self.loss_fn, 
             self.model_params
         ) = get_ahfe_joint_loss(self.tm_ligand_charges, self.hs, es, ss, prefactors, self.num_pcs, mlp_init_params)
+        if not self.use_pca: # use full rank, identity projection for PCs
+            self.pc_vals = jnp.ones(EMBED_DIM)
+            self.pc_vecs = jnp.identity(EMBED_DIM)
 
         # handle flattening.
         if mlp_init_params:
