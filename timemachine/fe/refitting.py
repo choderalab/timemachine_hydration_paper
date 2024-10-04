@@ -586,7 +586,6 @@ class Wrapper:
         es: typing.List[jax.Array],
         ss: typing.List[jax.Array],
         prefactors: typing.List[jax.Array],
-        use_pca: bool,
         num_pcs: int,
         mlp_init_params: typing.Union[typing.Tuple[int], None], # use (2,1) as default (2 features, 1 layer)
         retrieve_by_descent: bool,
@@ -596,6 +595,7 @@ class Wrapper:
         nESS_frac_threshold: float,
         nESS_coeff: float,
         nESS_on_test: bool = False,
+        use_pca: bool = True,
         ):
         self.exp_dgs = exp_dgs
         self.orig_calc_dgs = orig_calc_dgs
