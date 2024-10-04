@@ -702,7 +702,7 @@ class Wrapper:
                     params, jnp.zeros(self.validate_idxs.shape, dtype=jnp.float64), self.validate_idxs)
                 else:
                     validate_loss_val = 0.
-                return train_loss_vals + test_loss_val + validate_loss_val, train_loss_auxs
+                return train_loss_val + test_loss_val + validate_loss_val, train_loss_auxs
         else:
             def train_loss(params):
                 train_loss_val, train_loss_auxs = _loss_fn(
