@@ -595,6 +595,7 @@ class Wrapper:
         nESS_frac_threshold: float,
         nESS_coeff: float,
         nESS_on_test: bool = False,
+        nESS_on_validate: bool = False,
         use_pca: bool = True,
         ):
         self.exp_dgs = exp_dgs
@@ -614,6 +615,7 @@ class Wrapper:
         self.nESS_frac_threshold = nESS_frac_threshold
         self.nESS_coeff = nESS_coeff
         self.nESS_on_test = nESS_on_test
+        self.nESS_on_validate = nESS_on_validate
         (
             self.pc_vals, 
             self.pc_vecs, 
@@ -690,18 +692,24 @@ class Wrapper:
             dg_losses, nESS_losses, auxs = __loss_fn(params, dg_loss_weight, idxs)
             return jnp.mean(dg_losses) + jnp.sum(nESS_losses), auxs
         
-        if self.nESS_on_test: # need to run twice 
+        if self.nESS_on_test or self.nESS_on_validate: # need to run twice 
             def train_loss(params):
                 train_loss_val, train_loss_auxs = _loss_fn(
                     params, jnp.ones(self.train_idxs.shape, dtype=jnp.float64), self.train_idxs)
-                test_loss_val, test_loss_auxs = _loss_fn(
-                    params, jnp.zeros(self.test_idxs.shape, dtype=jnp.float64), self.test_idxs
-                )
-                if self.validate_idxs is not None:
-                    validate_loss_val, validate_loss_auxs = _loss_fn(
-                    params, jnp.zeros(self.validate_idxs.shape, dtype=jnp.float64), self.validate_idxs)
+
+                if self.nESS_on_test:
+                    test_loss_val, test_loss_auxs = _loss_fn(
+                        params, jnp.zeros(self.test_idxs.shape, dtype=jnp.float64), self.test_idxs
+                    )
                 else:
-                    validate_loss_val = 0.
+                    test_loss_val, test_loss_auxs = 0., None
+                
+                if self.validate_idxs is not None and self.nESS_on_validate:
+                    validate_loss_val, validate_loss_auxs = _loss_fn(
+                        params, jnp.zeros(self.validate_idxs.shape, dtype=jnp.float64), self.validate_idxs)
+                else:
+                    validate_loss_val, validate_loss_auxs = 0., None
+                    
                 return train_loss_val + test_loss_val + validate_loss_val, train_loss_auxs
         else:
             def train_loss(params):
