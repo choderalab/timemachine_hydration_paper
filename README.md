@@ -32,49 +32,21 @@ We currently support the following functional forms. Parameters that can be opti
 * Cuda 11.5+
 * CMake 3.24.3
 
-### Setup using Anaconda
+### Setup using Anaconda/Install TimeMachine
+The CUDA extension module implementing custom ops is only supported on Linux.
 
-If using conda the following can be used to configure your environment
-
-```shell
-conda env create -f environment.yml -n timemachine
-conda activate timemachine
-conda install openmm=8.0.0 -c conda-forge # only if using openmm from conda
-```
-
-### Install Time Machine
-
-The CUDA extension module implementing custom ops is only supported on Linux, but partial functionality is still available on non-Linux OSes.
 
 ```shell
-pip install -r requirements.txt
-pip install .
-```
+# install appropriate timemachine dependencies
+conda env create -f environment.yml -n tm_off
+conda activate tm_off
 
-## Developing Time Machine
-
-### Installing in developer mode
-
-```shell
-pip install -r requirements.txt
+# make and build timemachine after `git clone`
+git clone https://github.com/dominicrufa/timemachine.git 
+cd timemachine
 pip install -e .
-```
-
-Possible variants of the last step include
-
-```shell
-pip install -e .[dev,test]                 # optionally install dev and test dependencies
-CMAKE_ARGS=-DCUDA_ARCH=86 pip install -e . # override CUDA_ARCH
-SKIP_CUSTOM_OPS=1 pip install -e .         # skip building CUDA extension, no effect on non-Linux OSes
-```
-
-To rebuild the extension module after making changes to the C++/CUDA code, either rerun
-```shell
-pip install -e .
-```
-or
-```shell
-make build  # Must have installed dev dependencies for this to work
+make clean
+make build
 ```
 
 ### Running Tests
@@ -98,6 +70,9 @@ Most of the training is using the correctable charge corrections [ccc forcefield
 3. We use a consistent 0.5 scaling for the 1-4 terms across LJ and electrostatics.
 4. The reaction field used is the real part of PME with a beta (alpha) coefficient of 2.0
 5. The recharge BCC port is not yet complete, as there are some missing types that will cause very large errors (eg. P=S moieties).
+
+### Querying Manuscript Data/Analyses
+In order to query the submission scripts and analyses in the manuscript, navigate to the `timemachine/data` directory.
 
 # License
 
