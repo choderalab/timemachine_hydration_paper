@@ -2,7 +2,7 @@
 
 A high-performance differentiable molecular dynamics and forcefield engine, forked from `https://github.com/proteneer/timemachine`.
 
-Navigate to the `timemachine/data` directory for submission scripts and analysis notebooks concerning the FreeSolv hydration free energy fine-tuning manuscript (add link once posted to `arxiv`).
+Navigate to the `data` directory for submission scripts and analysis notebooks concerning the FreeSolv hydration free energy fine-tuning manuscript (add link once posted to `arxiv`).
 
 ## Features
 
