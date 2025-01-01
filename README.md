@@ -45,7 +45,7 @@ conda activate tm_off
 
 # make and build timemachine after `git clone`
 git clone https://github.com/choderalab/timemachine_hydration_paper
-cd timemachine
+cd timemachine_hydration_paper
 pip install -e .
 make clean
 make build
