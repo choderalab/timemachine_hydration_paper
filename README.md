@@ -1,6 +1,8 @@
 # Time Machine
 
-A high-performance differentiable molecular dynamics and forcefield engine.
+A high-performance differentiable molecular dynamics and forcefield engine, forked from `https://github.com/proteneer/timemachine`.
+
+Navigate to the `timemachine/data` directory for submission scripts and analysis notebooks concerning the FreeSolv hydration free energy fine-tuning manuscript (add link once posted to `arxiv`).
 
 ## Features
 
@@ -70,9 +72,6 @@ Most of the training is using the correctable charge corrections [ccc forcefield
 3. We use a consistent 0.5 scaling for the 1-4 terms across LJ and electrostatics.
 4. The reaction field used is the real part of PME with a beta (alpha) coefficient of 2.0
 5. The recharge BCC port is not yet complete, as there are some missing types that will cause very large errors (eg. P=S moieties).
-
-### Querying Manuscript Data/Analyses
-In order to query the submission scripts and analyses in the manuscript, navigate to the `timemachine/data` directory.
 
 # License
 
