@@ -44,7 +44,7 @@ conda env create -f environment.yml -n tm_off
 conda activate tm_off
 
 # make and build timemachine after `git clone`
-git clone https://github.com/dominicrufa/timemachine.git 
+git clone https://github.com/choderalab/timemachine_hydration_paper
 cd timemachine
 pip install -e .
 make clean
